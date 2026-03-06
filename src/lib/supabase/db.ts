@@ -127,6 +127,23 @@ export async function fetchIngredientCatalogCategories(): Promise<string[]> {
   return [...new Set((data ?? []).map((row: any) => row.category).filter(Boolean))];
 }
 
+export async function fetchIngredientCatalogCount(category?: string): Promise<number> {
+  if (!isSupabaseConfigured()) return 0;
+  const client = getClient();
+
+  let request = client
+    .from("ingredient_catalog")
+    .select("fdc_id", { count: "exact", head: true });
+
+  if (category) {
+    request = request.eq("category", category);
+  }
+
+  const { count, error } = await request;
+  if (error) throw error;
+  return count ?? 0;
+}
+
 export async function searchIngredientCatalog(
   query: string,
   category?: string,

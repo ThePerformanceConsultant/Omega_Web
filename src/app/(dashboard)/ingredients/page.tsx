@@ -1,9 +1,15 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Search, Filter, X, Database, ChevronDown } from "lucide-react";
 import { USDA_INGREDIENTS, INGREDIENT_CATEGORIES, USDAIngredient } from "@/lib/ingredient-data";
 import { IngredientDetailModal } from "@/components/ingredients/ingredient-detail-modal";
+import {
+  fetchIngredientCatalogCategories,
+  fetchIngredientCatalogCount,
+  isSupabaseConfigured,
+  searchIngredientCatalog,
+} from "@/lib/supabase/db";
 
 // Sort options
 type SortKey = "name" | "calories" | "protein" | "carbs" | "fat";
@@ -19,6 +25,16 @@ function getNutrient(ingredient: USDAIngredient, key: string): number {
   return ingredient.nutrients[key] ?? 0;
 }
 
+function normalizeSearch(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
 export default function IngredientsPage() {
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
@@ -26,17 +42,81 @@ export default function IngredientsPage() {
   const [sortBy, setSortBy] = useState<SortKey>("name");
   const [sortDesc, setSortDesc] = useState(false);
   const [selectedIngredient, setSelectedIngredient] = useState<USDAIngredient | null>(null);
+  const [remoteIngredients, setRemoteIngredients] = useState<USDAIngredient[] | null>(null);
+  const [remoteCategories, setRemoteCategories] = useState<string[]>([]);
+  const [remoteTotalCount, setRemoteTotalCount] = useState<number | null>(null);
+  const [isRemoteLoading, setIsRemoteLoading] = useState(false);
+
+  const supabaseEnabled = isSupabaseConfigured();
+
+  useEffect(() => {
+    if (!supabaseEnabled) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [categories, count] = await Promise.all([
+          fetchIngredientCatalogCategories(),
+          fetchIngredientCatalogCount(),
+        ]);
+        if (!cancelled) {
+          setRemoteCategories(categories);
+          setRemoteTotalCount(count);
+        }
+      } catch (error) {
+        console.error("[IngredientsPage] Failed to load catalog metadata:", error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabaseEnabled]);
+
+  useEffect(() => {
+    if (!supabaseEnabled) {
+      setRemoteIngredients(null);
+      return;
+    }
+
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setIsRemoteLoading(true);
+          const results = await searchIngredientCatalog(search, filterCategory || undefined, 2000);
+          if (!cancelled) {
+            setRemoteIngredients(results);
+          }
+        } catch (error) {
+          console.error("[IngredientsPage] Failed to search ingredient catalog:", error);
+          if (!cancelled) {
+            setRemoteIngredients(null);
+          }
+        } finally {
+          if (!cancelled) {
+            setIsRemoteLoading(false);
+          }
+        }
+      })();
+    }, 140);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [filterCategory, search, supabaseEnabled]);
 
   const filtered = useMemo(() => {
-    let result = USDA_INGREDIENTS;
+    let result = supabaseEnabled && remoteIngredients !== null
+      ? remoteIngredients
+      : USDA_INGREDIENTS;
 
     // Search
     if (search) {
-      const q = search.toLowerCase();
+      const q = normalizeSearch(search);
       result = result.filter(
         (item) =>
-          item.name.toLowerCase().includes(q) ||
-          item.category.toLowerCase().includes(q)
+          normalizeSearch(item.name).includes(q) ||
+          normalizeSearch(item.category).includes(q)
       );
     }
 
@@ -69,7 +149,7 @@ export default function IngredientsPage() {
     });
 
     return result;
-  }, [search, filterCategory, sortBy, sortDesc]);
+  }, [search, filterCategory, sortBy, sortDesc, supabaseEnabled, remoteIngredients]);
 
   // Group by category for display
   const grouped = useMemo(() => {
@@ -82,6 +162,15 @@ export default function IngredientsPage() {
   }, [filtered]);
 
   const hasActiveFilters = !!filterCategory;
+  const totalIngredientCount = supabaseEnabled && remoteTotalCount !== null
+    ? remoteTotalCount
+    : USDA_INGREDIENTS.length;
+  const sourceLabel = supabaseEnabled
+    ? "Supabase ingredient catalog"
+    : "USDA Foundation Foods";
+  const categoryOptions = supabaseEnabled && remoteCategories.length > 0
+    ? remoteCategories
+    : INGREDIENT_CATEGORIES;
 
   function toggleSort(key: SortKey) {
     if (sortBy === key) {
@@ -98,12 +187,12 @@ export default function IngredientsPage() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-muted">
-            {filtered.length} of {USDA_INGREDIENTS.length} ingredients
+            {filtered.length} of {totalIngredientCount} ingredients
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted">
           <Database size={12} />
-          <span>USDA Foundation Foods</span>
+          <span>{sourceLabel}</span>
         </div>
       </div>
 
@@ -147,7 +236,7 @@ export default function IngredientsPage() {
                 className="w-full px-3 py-2 rounded-lg bg-black/5 border border-black/10 text-foreground text-sm focus:outline-none focus:border-accent/50 appearance-none pr-8"
               >
                 <option value="">All Categories</option>
-                {INGREDIENT_CATEGORIES.map((cat) => (
+                {categoryOptions.map((cat) => (
                   <option key={cat} value={cat}>
                     {cat}
                   </option>
@@ -220,6 +309,9 @@ export default function IngredientsPage() {
 
         {/* Rows */}
         <div className="max-h-[calc(100vh-320px)] overflow-y-auto">
+          {isRemoteLoading && (
+            <p className="px-4 py-2 text-xs text-muted">Searching ingredient catalog...</p>
+          )}
           {sortBy === "name" && !search && !filterCategory ? (
             // Group by category when no search/filter and sorted by name
             grouped.map(([category, items]) => (
