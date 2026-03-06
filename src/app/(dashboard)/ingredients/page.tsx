@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { Search, Filter, X, Database, ChevronDown } from "lucide-react";
 import { USDA_INGREDIENTS, INGREDIENT_CATEGORIES, USDAIngredient } from "@/lib/ingredient-data";
 import { IngredientDetailModal } from "@/components/ingredients/ingredient-detail-modal";
+import { createClient } from "@/lib/supabase/client";
 import {
   fetchIngredientCatalogCategories,
   fetchIngredientCatalogCount,
@@ -42,15 +43,38 @@ export default function IngredientsPage() {
   const [sortBy, setSortBy] = useState<SortKey>("name");
   const [sortDesc, setSortDesc] = useState(false);
   const [selectedIngredient, setSelectedIngredient] = useState<USDAIngredient | null>(null);
-  const [remoteIngredients, setRemoteIngredients] = useState<USDAIngredient[] | null>(null);
+  const [remoteIngredients, setRemoteIngredients] = useState<USDAIngredient[]>([]);
   const [remoteCategories, setRemoteCategories] = useState<string[]>([]);
-  const [remoteTotalCount, setRemoteTotalCount] = useState<number | null>(null);
+  const [remoteTotalCount, setRemoteTotalCount] = useState(0);
   const [isRemoteLoading, setIsRemoteLoading] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
 
   const supabaseEnabled = isSupabaseConfigured();
 
   useEffect(() => {
-    if (!supabaseEnabled) return;
+    if (!supabaseEnabled) {
+      setAuthReady(false);
+      return;
+    }
+
+    let cancelled = false;
+    const supabase = createClient();
+    void supabase.auth.getSession().finally(() => {
+      if (!cancelled) setAuthReady(true);
+    });
+
+    const { data } = supabase.auth.onAuthStateChange(() => {
+      if (!cancelled) setAuthReady(true);
+    });
+
+    return () => {
+      cancelled = true;
+      data.subscription.unsubscribe();
+    };
+  }, [supabaseEnabled]);
+
+  useEffect(() => {
+    if (!supabaseEnabled || !authReady) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -64,16 +88,20 @@ export default function IngredientsPage() {
         }
       } catch (error) {
         console.error("[IngredientsPage] Failed to load catalog metadata:", error);
+        if (!cancelled) {
+          setRemoteCategories([]);
+          setRemoteTotalCount(0);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [supabaseEnabled]);
+  }, [authReady, supabaseEnabled]);
 
   useEffect(() => {
-    if (!supabaseEnabled) {
-      setRemoteIngredients(null);
+    if (!supabaseEnabled || !authReady) {
+      setRemoteIngredients([]);
       return;
     }
 
@@ -89,7 +117,7 @@ export default function IngredientsPage() {
         } catch (error) {
           console.error("[IngredientsPage] Failed to search ingredient catalog:", error);
           if (!cancelled) {
-            setRemoteIngredients(null);
+            setRemoteIngredients([]);
           }
         } finally {
           if (!cancelled) {
@@ -103,12 +131,10 @@ export default function IngredientsPage() {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [filterCategory, search, supabaseEnabled]);
+  }, [authReady, filterCategory, search, supabaseEnabled]);
 
   const filtered = useMemo(() => {
-    let result = supabaseEnabled && remoteIngredients !== null
-      ? remoteIngredients
-      : USDA_INGREDIENTS;
+    let result = supabaseEnabled ? remoteIngredients : USDA_INGREDIENTS;
 
     // Search
     if (search) {
@@ -162,9 +188,7 @@ export default function IngredientsPage() {
   }, [filtered]);
 
   const hasActiveFilters = !!filterCategory;
-  const totalIngredientCount = supabaseEnabled && remoteTotalCount !== null
-    ? remoteTotalCount
-    : USDA_INGREDIENTS.length;
+  const totalIngredientCount = supabaseEnabled ? remoteTotalCount : USDA_INGREDIENTS.length;
   const sourceLabel = supabaseEnabled
     ? "Supabase ingredient catalog"
     : "USDA Foundation Foods";
