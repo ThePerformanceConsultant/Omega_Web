@@ -52,6 +52,19 @@ npm run build
 3. Add all environment variables from `.env.example` in Vercel Project Settings.
 4. Deploy from the main branch.
 
+## Source-Of-Truth Workflow
+
+- This repo (`Omega_Web`) is the source of truth for coach web deployments.
+- If a web feature is implemented elsewhere first, it must be ported here before redeploying.
+- Always verify with:
+
+```bash
+git status
+npm run build
+```
+
+- Deploy only the latest pushed commit on `main`.
+
 ## Notes
 
 - `SUPABASE_SERVICE_ROLE_KEY` is server-side only; never expose it to clients.

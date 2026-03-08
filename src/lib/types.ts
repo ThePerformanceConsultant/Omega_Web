@@ -943,6 +943,27 @@ export interface VaultItem {
   storagePath?: string | null;
 }
 
+export type InsightCadenceUnit = "days" | "weeks";
+
+export interface CoachInsight {
+  id: string;
+  coachId: string;
+  title: string;
+  body: string;
+  tags: string[];
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CoachInsightSettings {
+  coachId: string;
+  cadenceUnit: InsightCadenceUnit;
+  cadenceValue: number;
+  updatedAt: string;
+}
+
 // ==========================================
 // Activity Session Types
 // ==========================================

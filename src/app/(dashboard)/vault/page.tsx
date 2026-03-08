@@ -17,6 +17,9 @@ import {
   GraduationCap,
   Library,
   Search,
+  Lightbulb,
+  Save,
+  RefreshCw,
 } from "lucide-react";
 import {
   getCoachId,
@@ -35,8 +38,23 @@ import {
   grantCourseAccess,
   revokeCourseAccess,
   fetchClients,
+  fetchCoachInsights,
+  createCoachInsight,
+  updateCoachInsight,
+  deleteCoachInsight,
+  fetchCoachInsightSettings,
+  upsertCoachInsightSettings,
 } from "@/lib/supabase/db";
-import type { VaultSection, VaultItemType, VaultFolder, VaultItem, Client } from "@/lib/types";
+import type {
+  VaultSection,
+  VaultItemType,
+  VaultFolder,
+  VaultItem,
+  Client,
+  CoachInsight,
+  CoachInsightSettings,
+  InsightCadenceUnit,
+} from "@/lib/types";
 
 // ─── Helpers ───
 
@@ -84,6 +102,36 @@ function fromDbItem(row: Record<string, unknown>): VaultItem {
     fileSize: (row.file_size as number | null) ?? null,
     sortOrder: (row.sort_order as number) ?? 0,
     createdAt: row.created_at as string,
+  };
+}
+
+function fromDbInsight(row: Record<string, unknown>): CoachInsight {
+  const tagsRaw = row.tags;
+  const tags = Array.isArray(tagsRaw)
+    ? tagsRaw.map((tag) => String(tag).trim()).filter(Boolean)
+    : [];
+
+  return {
+    id: String(row.id),
+    coachId: String(row.coach_id ?? ""),
+    title: String(row.title ?? ""),
+    body: String(row.body ?? ""),
+    tags,
+    isActive: Boolean(row.is_active ?? true),
+    sortOrder: Number(row.sort_order ?? 0),
+    createdAt: String(row.created_at ?? ""),
+    updatedAt: String(row.updated_at ?? ""),
+  };
+}
+
+function fromDbInsightSettings(row: Record<string, unknown>): CoachInsightSettings {
+  const cadenceUnitRaw = String(row.cadence_unit ?? "weeks");
+  const cadenceUnit: InsightCadenceUnit = cadenceUnitRaw === "days" ? "days" : "weeks";
+  return {
+    coachId: String(row.coach_id ?? ""),
+    cadenceUnit,
+    cadenceValue: Math.max(1, Number(row.cadence_value ?? 1)),
+    updatedAt: String(row.updated_at ?? ""),
   };
 }
 
@@ -697,39 +745,247 @@ function ItemCardComponent({
   );
 }
 
+function InsightModal({
+  insight,
+  onClose,
+  onSave,
+}: {
+  insight: CoachInsight | null;
+  onClose: () => void;
+  onSave: (input: {
+    title: string;
+    body: string;
+    tags: string[];
+    isActive: boolean;
+  }) => Promise<void>;
+}) {
+  const [title, setTitle] = useState(insight?.title ?? "");
+  const [body, setBody] = useState(insight?.body ?? "");
+  const [tagsText, setTagsText] = useState((insight?.tags ?? []).join(", "));
+  const [isActive, setIsActive] = useState(insight?.isActive ?? true);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim() || !body.trim()) return;
+    setSaving(true);
+    try {
+      const tags = tagsText
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+      await onSave({
+        title: title.trim(),
+        body: body.trim(),
+        tags,
+        isActive,
+      });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <form
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={handleSubmit}
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-xl p-6 space-y-4"
+      >
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-bold">{insight ? "Edit Insight" : "New Insight"}</h3>
+          <button type="button" onClick={onClose} className="p-1 rounded-lg hover:bg-black/5">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div>
+          <label className="text-xs font-medium text-muted block mb-1">Title</label>
+          <input
+            autoFocus
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Short headline"
+            className="w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs font-medium text-muted block mb-1">Insight</label>
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={5}
+            placeholder="Actionable coaching tip..."
+            className="w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none resize-y"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs font-medium text-muted block mb-1">Tags (comma separated)</label>
+          <input
+            value={tagsText}
+            onChange={(e) => setTagsText(e.target.value)}
+            placeholder="sleep, recovery, consistency"
+            className="w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
+          />
+        </div>
+
+        <label className="flex items-center gap-2 text-sm text-foreground">
+          <input
+            type="checkbox"
+            checked={isActive}
+            onChange={(e) => setIsActive(e.target.checked)}
+            className="w-4 h-4 rounded border-black/20 accent-accent"
+          />
+          Active (eligible for client rotation)
+        </label>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm rounded-lg text-muted hover:bg-black/5">
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!title.trim() || !body.trim() || saving}
+            className="px-4 py-2 text-sm rounded-lg bg-gradient-to-br from-accent to-accent-light text-white font-medium disabled:opacity-50"
+          >
+            {saving ? "Saving..." : insight ? "Update" : "Create"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function InsightCard({
+  insight,
+  onEdit,
+  onDelete,
+  onToggleActive,
+}: {
+  insight: CoachInsight;
+  onEdit: () => void;
+  onDelete: () => void;
+  onToggleActive: (next: boolean) => void;
+}) {
+  return (
+    <div className="glass-card p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h4 className="text-sm font-semibold text-foreground truncate">{insight.title}</h4>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full ${insight.isActive ? "bg-emerald-100 text-emerald-700" : "bg-black/10 text-muted"}`}>
+              {insight.isActive ? "Active" : "Paused"}
+            </span>
+          </div>
+          <p className="text-xs text-muted mt-1 whitespace-pre-wrap line-clamp-4">{insight.body}</p>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={onEdit}
+            className="w-7 h-7 rounded-lg bg-black/5 hover:bg-black/10 flex items-center justify-center text-muted"
+            aria-label="Edit insight"
+          >
+            <Pencil size={13} />
+          </button>
+          <button
+            onClick={onDelete}
+            className="w-7 h-7 rounded-lg bg-black/5 hover:bg-black/10 flex items-center justify-center text-danger"
+            aria-label="Delete insight"
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+      </div>
+
+      {insight.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {insight.tags.map((tag) => (
+            <span key={`${insight.id}-${tag}`} className="text-[10px] px-2 py-0.5 rounded-full bg-accent/10 text-accent">
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <label className="flex items-center gap-2 text-xs text-muted">
+        <input
+          type="checkbox"
+          checked={insight.isActive}
+          onChange={(e) => onToggleActive(e.target.checked)}
+          className="w-4 h-4 rounded border-black/20 accent-accent"
+        />
+        Include in rotation
+      </label>
+    </div>
+  );
+}
+
 // ─── Main Page ───
 
 type BreadcrumbEntry = { id: number; name: string };
+type VaultTab = VaultSection | "insights";
 
 export default function VaultPage() {
   const [coachId, setCoachId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<VaultSection>("resources");
+  const [activeTab, setActiveTab] = useState<VaultTab>("resources");
   const [folderPath, setFolderPath] = useState<BreadcrumbEntry[]>([]);
   const [folders, setFolders] = useState<VaultFolder[]>([]);
   const [items, setItems] = useState<VaultItem[]>([]);
+  const [insights, setInsights] = useState<CoachInsight[]>([]);
+  const [insightSettings, setInsightSettings] = useState<CoachInsightSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [clients, setClients] = useState<Client[]>([]);
   const [courseAccessCounts, setCourseAccessCounts] = useState<Record<string, number>>({});
+  const [savingCadence, setSavingCadence] = useState(false);
 
   // Modals
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [editingFolder, setEditingFolder] = useState<VaultFolder | null>(null);
   const [showItemModal, setShowItemModal] = useState(false);
   const [editingItem, setEditingItem] = useState<VaultItem | null>(null);
+  const [showInsightModal, setShowInsightModal] = useState(false);
+  const [editingInsight, setEditingInsight] = useState<CoachInsight | null>(null);
   const [courseAccessTarget, setCourseAccessTarget] = useState<{ id: number; name: string } | null>(null);
 
+  const isInsightsTab = activeTab === "insights";
   const currentFolderId = folderPath.length > 0 ? folderPath[folderPath.length - 1].id : null;
   const depth = folderPath.length;
-  const maxDepth = getMaxDepth(activeTab);
-  const canCreateSubfolder = depth < maxDepth;
-  const canAddItem = depth > 0;
-  const isInsideFolder = depth > 0;
+  const maxDepth = !isInsightsTab ? getMaxDepth(activeTab) : 0;
+  const canCreateSubfolder = !isInsightsTab && depth < maxDepth;
+  const canAddItem = !isInsightsTab && depth > 0;
+  const isInsideFolder = !isInsightsTab && depth > 0;
 
   // ─── Load data ───
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
+      if (activeTab === "insights") {
+        const [fetchedInsights, fetchedSettings] = await Promise.all([
+          fetchCoachInsights(),
+          fetchCoachInsightSettings(coachId ?? undefined),
+        ]);
+        setInsights(fetchedInsights.map((row) => fromDbInsight(row as Record<string, unknown>)));
+        if (fetchedSettings) {
+          setInsightSettings(fromDbInsightSettings(fetchedSettings as Record<string, unknown>));
+        } else if (coachId) {
+          setInsightSettings({
+            coachId,
+            cadenceUnit: "weeks",
+            cadenceValue: 1,
+            updatedAt: new Date().toISOString(),
+          });
+        } else {
+          setInsightSettings(null);
+        }
+        setFolders([]);
+        setItems([]);
+        return;
+      }
+
       const fetchedFolders = await fetchVaultFolders(activeTab, currentFolderId);
       setFolders(fetchedFolders.map(fromDbFolder));
 
@@ -778,7 +1034,7 @@ export default function VaultPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeTab, currentFolderId]);
+  }, [activeTab, currentFolderId, coachId]);
 
   useEffect(() => {
     getCoachId().then((id) => {
@@ -814,6 +1070,7 @@ export default function VaultPage() {
 
   async function handleSaveFolder(name: string, description: string) {
     if (!coachId) return;
+    if (activeTab === "insights") return;
     if (editingFolder) {
       await updateVaultFolder(Number(editingFolder.id), { name, description: description || null });
     } else {
@@ -826,6 +1083,71 @@ export default function VaultPage() {
       });
     }
     await loadData();
+  }
+
+  async function handleSaveInsight(input: {
+    title: string;
+    body: string;
+    tags: string[];
+    isActive: boolean;
+  }) {
+    if (!coachId) return;
+    if (editingInsight) {
+      await updateCoachInsight(Number(editingInsight.id), {
+        title: input.title,
+        body: input.body,
+        tags: input.tags,
+        isActive: input.isActive,
+      });
+    } else {
+      await createCoachInsight({
+        coachId,
+        title: input.title,
+        body: input.body,
+        tags: input.tags,
+        isActive: input.isActive,
+      });
+    }
+    await loadData();
+  }
+
+  async function handleDeleteInsight(insight: CoachInsight) {
+    if (!confirm(`Delete insight "${insight.title}"?`)) return;
+    await deleteCoachInsight(Number(insight.id));
+    await loadData();
+  }
+
+  async function handleToggleInsightActive(insight: CoachInsight, next: boolean) {
+    try {
+      await updateCoachInsight(Number(insight.id), { isActive: next });
+      setInsights((prev) => prev.map((entry) => (
+        entry.id === insight.id ? { ...entry, isActive: next } : entry
+      )));
+    } catch (err) {
+      console.error("[Vault] toggle insight active failed:", err);
+    }
+  }
+
+  async function handleSaveCadence() {
+    if (!coachId) return;
+    const unit = insightSettings?.cadenceUnit ?? "weeks";
+    const value = Math.max(1, Math.floor(insightSettings?.cadenceValue ?? 1));
+
+    setSavingCadence(true);
+    try {
+      const row = await upsertCoachInsightSettings({
+        coachId,
+        cadenceUnit: unit,
+        cadenceValue: value,
+      });
+      if (row) {
+        setInsightSettings(fromDbInsightSettings(row as Record<string, unknown>));
+      } else {
+        setInsightSettings((prev) => prev ? { ...prev, cadenceUnit: unit, cadenceValue: value } : prev);
+      }
+    } finally {
+      setSavingCadence(false);
+    }
   }
 
   async function handleDeleteFolder(folder: VaultFolder) {
@@ -853,9 +1175,10 @@ export default function VaultPage() {
 
   // ─── Render ───
 
-  const tabOptions: { value: VaultSection; label: string; icon: typeof Library }[] = [
+  const tabOptions: { value: VaultTab; label: string; icon: typeof Library }[] = [
     { value: "resources", label: "Resources", icon: Library },
     { value: "courses", label: "Courses", icon: GraduationCap },
+    { value: "insights", label: "Insights", icon: Lightbulb },
   ];
 
   return (
@@ -874,6 +1197,7 @@ export default function VaultPage() {
                   setFolderPath([]);
                   setFolders([]);
                   setItems([]);
+                  setInsights([]);
                 }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   activeTab === tab.value
@@ -889,13 +1213,22 @@ export default function VaultPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          {isInsightsTab && (
+            <button
+              onClick={() => { setEditingInsight(null); setShowInsightModal(true); }}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-br from-accent to-accent-light text-white text-sm font-medium"
+            >
+              <Plus size={16} />
+              Insight
+            </button>
+          )}
           {canCreateSubfolder && (
             <button
               onClick={() => { setEditingFolder(null); setShowFolderModal(true); }}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-br from-accent to-accent-light text-white text-sm font-medium"
             >
               <Plus size={16} />
-              {DEPTH_LABELS[activeTab][depth] ?? "Folder"}
+              {DEPTH_LABELS[activeTab as VaultSection][depth] ?? "Folder"}
             </button>
           )}
           {canAddItem && (
@@ -941,6 +1274,81 @@ export default function VaultPage() {
       {loading ? (
         <div className="glass-card p-12 text-center">
           <p className="text-sm text-muted">Loading...</p>
+        </div>
+      ) : isInsightsTab ? (
+        <div className="space-y-4">
+          <div className="glass-card p-5 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Insight Cadence</h3>
+                <p className="text-xs text-muted">How often each insight rotates on client dashboards.</p>
+              </div>
+              <button
+                onClick={handleSaveCadence}
+                disabled={!insightSettings || savingCadence}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-accent/30 text-accent text-xs font-medium hover:bg-accent/5 disabled:opacity-50"
+              >
+                {savingCadence ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                Save
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted">Every</span>
+              <input
+                type="number"
+                min={1}
+                value={insightSettings?.cadenceValue ?? 1}
+                onChange={(e) => {
+                  const next = Math.max(1, Number(e.target.value || 1));
+                  setInsightSettings((prev) => ({
+                    coachId: prev?.coachId ?? coachId ?? "",
+                    cadenceUnit: prev?.cadenceUnit ?? "weeks",
+                    cadenceValue: next,
+                    updatedAt: prev?.updatedAt ?? new Date().toISOString(),
+                  }));
+                }}
+                className="w-20 px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
+              />
+              <select
+                value={insightSettings?.cadenceUnit ?? "weeks"}
+                onChange={(e) => {
+                  const nextUnit = (e.target.value === "days" ? "days" : "weeks") as InsightCadenceUnit;
+                  setInsightSettings((prev) => ({
+                    coachId: prev?.coachId ?? coachId ?? "",
+                    cadenceUnit: nextUnit,
+                    cadenceValue: prev?.cadenceValue ?? 1,
+                    updatedAt: prev?.updatedAt ?? new Date().toISOString(),
+                  }));
+                }}
+                className="px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
+              >
+                <option value="days">day(s)</option>
+                <option value="weeks">week(s)</option>
+              </select>
+            </div>
+          </div>
+
+          {insights.length === 0 ? (
+            <div className="glass-card p-12 text-center">
+              <div className="flex flex-col items-center gap-3">
+                <Lightbulb size={40} className="text-muted/30" />
+                <p className="text-sm text-muted">No insights yet — create your first coaching tip.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {insights.map((insight) => (
+                <InsightCard
+                  key={insight.id}
+                  insight={insight}
+                  onEdit={() => { setEditingInsight(insight); setShowInsightModal(true); }}
+                  onDelete={() => handleDeleteInsight(insight)}
+                  onToggleActive={(next) => handleToggleInsightActive(insight, next)}
+                />
+              ))}
+            </div>
+          )}
         </div>
       ) : folders.length === 0 && items.length === 0 ? (
         <div className="glass-card p-12 text-center">
@@ -988,7 +1396,7 @@ export default function VaultPage() {
       {/* Modals */}
       {showFolderModal && (
         <FolderModal
-          section={activeTab}
+          section={activeTab as VaultSection}
           depth={depth}
           folder={editingFolder}
           onClose={() => { setShowFolderModal(false); setEditingFolder(null); }}
@@ -1012,6 +1420,14 @@ export default function VaultPage() {
           folderName={courseAccessTarget.name}
           clients={clients}
           onClose={() => setCourseAccessTarget(null)}
+        />
+      )}
+
+      {showInsightModal && (
+        <InsightModal
+          insight={editingInsight}
+          onClose={() => { setShowInsightModal(false); setEditingInsight(null); }}
+          onSave={handleSaveInsight}
         />
       )}
     </div>

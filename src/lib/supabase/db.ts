@@ -932,8 +932,10 @@ export async function fetchClientExtendedInfo(clientId: string) {
     .eq("form_assignments.client_id", clientId)
     .order("submitted_at", { ascending: false });
 
-  // Build question_text → answer_text map from onboarding + nutrition responses
+  // Build question_text → answer_text maps (prefer nutrition_intake for TDEE vars)
   const qa: Record<string, string> = {};
+  const nutritionQa: Record<string, string> = {};
+  const onboardingQa: Record<string, string> = {};
   let onboardingSubmissionId: number | null = null;
   const onboardingQaPairs: { question: string; answer: string }[] = [];
   const nutritionQaPairs: { question: string; answer: string }[] = [];
@@ -949,36 +951,36 @@ export async function fetchClientExtendedInfo(clientId: string) {
         const key = qText.toLowerCase().trim();
         if (!qa[key]) qa[key] = answer; // first (most recent) wins
         if (ft === "onboarding") {
+          if (!onboardingQa[key]) onboardingQa[key] = answer;
           onboardingQaPairs.push({ question: qText, answer });
         } else if (ft === "nutrition_intake") {
+          if (!nutritionQa[key]) nutritionQa[key] = answer;
           nutritionQaPairs.push({ question: qText, answer });
         }
       }
     }
   }
 
-  // Keyword matcher (same pattern as fetchNutritionOnboardingData)
-  const find = (keywords: string[]): string => {
-    for (const [qText, answer] of Object.entries(qa)) {
+  const findIn = (source: Record<string, string>, keywords: string[]): string => {
+    for (const [qText, answer] of Object.entries(source)) {
       if (keywords.some((kw) => qText.includes(kw))) return answer;
     }
     return "";
   };
-  const parseList = (v: string): string[] => {
-    if (!v) return [];
-    try { const p = JSON.parse(v); if (Array.isArray(p)) return p; } catch {}
-    return v.split(",").map((s) => s.trim()).filter(Boolean);
+  const find = (keywords: string[]): string =>
+    findIn(nutritionQa, keywords) || findIn(onboardingQa, keywords) || findIn(qa, keywords);
+  const findWeightAnswer = (source: Record<string, string>): string => {
+    for (const [qText, answer] of Object.entries(source)) {
+      if (qText.includes("weight") && !qText.includes("goal") && !qText.includes("target")) return answer;
+    }
+    return "";
   };
 
   // Extract fields — prefer form answers over profile defaults
   const heightCm = parseFloat(find(["height"])) || null;
   // Find weight — match "weight" but not "goal weight" / "target weight"
-  const weightAnswer = (() => {
-    for (const [qText, answer] of Object.entries(qa)) {
-      if (qText.includes("weight") && !qText.includes("goal") && !qText.includes("target")) return answer;
-    }
-    return "";
-  })();
+  const weightAnswer =
+    findWeightAnswer(nutritionQa) || findWeightAnswer(onboardingQa) || findWeightAnswer(qa);
   const formWeight = parseFloat(weightAnswer) || null;
   const weightKg = formWeight || (profile?.current_weight ? Number(profile.current_weight) : null);
   const gender = (find(["gender", "sex"]).toLowerCase() || null) as "male" | "female" | "other" | null;
@@ -2201,6 +2203,134 @@ export async function getVaultFileUrl(path: string): Promise<string> {
     .createSignedUrl(path, 3600); // 1 hour
   if (error) throw error;
   return data.signedUrl;
+}
+
+// ── Vault Insights ───────────────────────────────────────
+
+export async function fetchCoachInsights() {
+  if (!isSupabaseConfigured()) return [];
+  const coachId = await getCoachId();
+  if (!coachId) return [];
+
+  const client = getClient();
+  const { data, error } = await client
+    .from("coach_insights")
+    .select("*")
+    .eq("coach_id", coachId)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function createCoachInsight(params: {
+  coachId?: string;
+  title: string;
+  body: string;
+  tags?: string[];
+  isActive?: boolean;
+  sortOrder?: number;
+}) {
+  if (!isSupabaseConfigured()) return null;
+  const coachId = params.coachId ?? await getCoachId();
+  if (!coachId) return null;
+
+  const client = getClient();
+  const { data, error } = await client
+    .from("coach_insights")
+    .insert({
+      coach_id: coachId,
+      title: params.title.trim(),
+      body: params.body.trim(),
+      tags: params.tags ?? [],
+      is_active: params.isActive ?? true,
+      sort_order: params.sortOrder ?? 0,
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function updateCoachInsight(insightId: number, updates: {
+  title?: string;
+  body?: string;
+  tags?: string[];
+  isActive?: boolean;
+  sortOrder?: number;
+}) {
+  if (!isSupabaseConfigured()) return;
+  const client = getClient();
+
+  const mapped: Record<string, unknown> = {};
+  if (updates.title !== undefined) mapped.title = updates.title.trim();
+  if (updates.body !== undefined) mapped.body = updates.body.trim();
+  if (updates.tags !== undefined) mapped.tags = updates.tags;
+  if (updates.isActive !== undefined) mapped.is_active = updates.isActive;
+  if (updates.sortOrder !== undefined) mapped.sort_order = updates.sortOrder;
+
+  const { error } = await client
+    .from("coach_insights")
+    .update(mapped)
+    .eq("id", insightId);
+
+  if (error) throw error;
+}
+
+export async function deleteCoachInsight(insightId: number) {
+  if (!isSupabaseConfigured()) return;
+  const client = getClient();
+  const { error } = await client
+    .from("coach_insights")
+    .delete()
+    .eq("id", insightId);
+  if (error) throw error;
+}
+
+export async function fetchCoachInsightSettings(coachIdParam?: string) {
+  if (!isSupabaseConfigured()) return null;
+  const coachId = coachIdParam ?? await getCoachId();
+  if (!coachId) return null;
+
+  const client = getClient();
+  const { data, error } = await client
+    .from("coach_insight_settings")
+    .select("*")
+    .eq("coach_id", coachId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ?? null;
+}
+
+export async function upsertCoachInsightSettings(params: {
+  coachId?: string;
+  cadenceUnit: "days" | "weeks";
+  cadenceValue: number;
+}) {
+  if (!isSupabaseConfigured()) return null;
+  const coachId = params.coachId ?? await getCoachId();
+  if (!coachId) return null;
+
+  const client = getClient();
+  const cadenceValue = Math.max(1, Math.floor(params.cadenceValue));
+  const { data, error } = await client
+    .from("coach_insight_settings")
+    .upsert(
+      {
+        coach_id: coachId,
+        cadence_unit: params.cadenceUnit,
+        cadence_value: cadenceValue,
+      },
+      { onConflict: "coach_id" }
+    )
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
 }
 
 // ── Realtime Subscriptions ──────────────────────────────
