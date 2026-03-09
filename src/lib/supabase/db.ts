@@ -1576,6 +1576,7 @@ function fromDbProgram(row: any): ProgramWithPhases {
             phase_id: w.phase_id,
             name: w.name ?? "",
             sort_order: w.sort_order ?? 0,
+            scheduled_weekday: typeof w.scheduled_weekday === "number" ? w.scheduled_weekday : null,
             workout_sections: sections,
             exercises,
           };
@@ -1716,6 +1717,7 @@ export async function saveProgram(program: ProgramWithPhases, coachId: string, o
           phase_id: savedPhase.id,
           name: workout.name,
           sort_order: wi,
+          scheduled_weekday: workout.scheduled_weekday ?? null,
         })
         .select()
         .single();
@@ -2488,19 +2490,42 @@ export async function deleteMetricConfig(configId: string): Promise<void> {
 export async function fetchMetricEntries(clientId: string): Promise<any[]> {
   if (!isSupabaseConfigured()) return [];
   const client = getClient();
-  const { data, error } = await client
-    .from("metric_entries")
-    .select("*, metric_configs!inner(client_id)")
-    .eq("metric_configs.client_id", clientId)
-    .order("date", { ascending: true });
-  if (error) throw error;
-  return (data ?? []).map((r: any) => ({
-    id: String(r.id),
-    metricId: String(r.metric_id),
-    value: Number(r.value),
-    date: r.date,
-    source: r.source ?? "manual",
-  }));
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 400);
+  const cutoffIso = cutoff.toISOString();
+
+  const pageSize = 1000;
+  const maxRows = 20000;
+  let offset = 0;
+  const rows: any[] = [];
+
+  // Fetch newest-first in pages so recent windows (1W/1M/3M/6M) are always available
+  // even when total metric history exceeds the PostgREST per-request row cap.
+  while (rows.length < maxRows) {
+    const { data, error } = await client
+      .from("metric_entries")
+      .select("*, metric_configs!inner(client_id)")
+      .eq("metric_configs.client_id", clientId)
+      .gte("date", cutoffIso)
+      .order("date", { ascending: false })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    const page = data ?? [];
+    if (page.length === 0) break;
+    rows.push(...page);
+    if (page.length < pageSize) break;
+    offset += pageSize;
+  }
+
+  return rows
+    .map((r: any) => ({
+      id: String(r.id),
+      metricId: String(r.metric_id),
+      value: Number(r.value),
+      date: r.date,
+      source: r.source ?? "manual",
+    }))
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 }
 
 // ── Invite Codes ──────────────────────────────────────────

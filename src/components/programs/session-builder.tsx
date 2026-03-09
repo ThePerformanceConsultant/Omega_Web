@@ -41,6 +41,16 @@ export function SessionBuilder({
   onBack,
   initialWorkoutIdx = 0,
 }: SessionBuilderProps) {
+  const WEEKDAY_OPTIONS: Array<{ value: number; label: string; short: string }> = [
+    { value: 2, label: "Monday", short: "Mon" },
+    { value: 3, label: "Tuesday", short: "Tue" },
+    { value: 4, label: "Wednesday", short: "Wed" },
+    { value: 5, label: "Thursday", short: "Thu" },
+    { value: 6, label: "Friday", short: "Fri" },
+    { value: 7, label: "Saturday", short: "Sat" },
+    { value: 1, label: "Sunday", short: "Sun" },
+  ];
+
   const [workoutIdx, setWorkoutIdx] = useState(initialWorkoutIdx);
   const [exerciseLibrary, setExerciseLibrary] = useState<Exercise[]>(EXERCISES);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
@@ -298,6 +308,7 @@ export function SessionBuilder({
         phase_id: ph.id,
         name: "Workout " + (ph.workouts.length + 1),
         sort_order: ph.workouts.length,
+        scheduled_weekday: null,
         workout_sections: [{ id: Date.now() + 1, workout_id: 0, name: "Main", notes: "", sort_order: 0 }],
         exercises: [],
       });
@@ -778,27 +789,34 @@ export function SessionBuilder({
             <button
               key={w.id}
               onClick={() => setWorkoutIdx(i)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
+            className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
                 workoutIdx === i
                   ? "bg-accent/20 text-accent"
                   : "bg-white/8 text-white/50 hover:text-white"
               }`}
             >
-              {editing ? (
-                <input
-                  className="bg-transparent border-none text-center outline-none font-semibold text-white"
-                  style={{ width: Math.max(60, w.name.length * 8) }}
-                  value={w.name}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => {
-                    onProgramChange((p) => {
-                      p.phases[phaseIdx].workouts[i].name = e.target.value;
-                    });
-                  }}
-                />
-              ) : (
-                w.name
-              )}
+              <div className="flex flex-col items-center gap-0.5">
+                {editing ? (
+                  <input
+                    className="bg-transparent border-none text-center outline-none font-semibold text-white"
+                    style={{ width: Math.max(60, w.name.length * 8) }}
+                    value={w.name}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      onProgramChange((p) => {
+                        p.phases[phaseIdx].workouts[i].name = e.target.value;
+                      });
+                    }}
+                  />
+                ) : (
+                  <span>{w.name}</span>
+                )}
+                {typeof w.scheduled_weekday === "number" && (
+                  <span className="text-[10px] opacity-80">
+                    {WEEKDAY_OPTIONS.find((opt) => opt.value === w.scheduled_weekday)?.short ?? "Day"}
+                  </span>
+                )}
+              </div>
             </button>
           ))}
           {editing && (
@@ -815,6 +833,35 @@ export function SessionBuilder({
         <div className="flex-1 overflow-y-auto p-5">
           {workout ? (
             <div>
+              <div className="mb-4 flex items-center gap-3 px-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  Ideal Day
+                </span>
+                {editing ? (
+                  <select
+                    value={workout.scheduled_weekday ?? ""}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      onProgramChange((p) => {
+                        p.phases[phaseIdx].workouts[workoutIdx].scheduled_weekday = raw ? Number(raw) : null;
+                      });
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-black/5 border border-black/10 text-sm outline-none focus:border-accent/50"
+                  >
+                    <option value="">Not set</option>
+                    {WEEKDAY_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="text-sm text-foreground">
+                    {WEEKDAY_OPTIONS.find((opt) => opt.value === workout.scheduled_weekday)?.label ?? "Not set"}
+                  </span>
+                )}
+              </div>
+
               {workout.workout_sections.map((sec, si) => {
                 const sectionExercises = workout.exercises
                   .map((ex, origIdx) => ({ ex, origIdx }))

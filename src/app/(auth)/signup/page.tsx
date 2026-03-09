@@ -42,10 +42,12 @@ function SignUpForm() {
       }
 
       // Sign up
+      const emailRedirectTo = `${window.location.origin}/auth/confirmed`;
       const { error: signUpError } = await supabase.auth.signUp({
         email,
         password,
         options: {
+          emailRedirectTo,
           data: {
             role: "client",
             coach_id: coachId,

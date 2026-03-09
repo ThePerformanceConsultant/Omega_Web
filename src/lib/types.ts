@@ -179,6 +179,7 @@ export interface PhaseWorkout {
   phase_id: number;
   name: string;
   sort_order: number;
+  scheduled_weekday?: number | null; // 1=Sun ... 7=Sat
   workout_sections?: WorkoutSection[];
   workout_exercises?: WorkoutExercise[];
 }
