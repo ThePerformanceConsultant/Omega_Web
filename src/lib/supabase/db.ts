@@ -2490,6 +2490,17 @@ export async function deleteMetricConfig(configId: string): Promise<void> {
 export async function fetchMetricEntries(clientId: string): Promise<any[]> {
   if (!isSupabaseConfigured()) return [];
   const client = getClient();
+  const { data: configs, error: configsError } = await client
+    .from("metric_configs")
+    .select("id")
+    .eq("client_id", clientId);
+  if (configsError) throw configsError;
+
+  const metricIds = (configs ?? [])
+    .map((r: any) => Number(r.id))
+    .filter((id: number) => Number.isFinite(id));
+  if (metricIds.length === 0) return [];
+
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 400);
   const cutoffIso = cutoff.toISOString();
@@ -2504,8 +2515,8 @@ export async function fetchMetricEntries(clientId: string): Promise<any[]> {
   while (rows.length < maxRows) {
     const { data, error } = await client
       .from("metric_entries")
-      .select("*, metric_configs!inner(client_id)")
-      .eq("metric_configs.client_id", clientId)
+      .select("id, metric_id, value, date, source")
+      .in("metric_id", metricIds)
       .gte("date", cutoffIso)
       .order("date", { ascending: false })
       .range(offset, offset + pageSize - 1);
