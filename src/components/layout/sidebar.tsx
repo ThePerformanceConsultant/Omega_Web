@@ -17,6 +17,7 @@ import {
   BarChart3,
   FolderOpen,
   Palette,
+  Settings,
   ChevronLeft,
   ChevronRight,
   LogOut,
@@ -40,6 +41,7 @@ const baseNavItems = [
   { id: "analytics", label: "Analytics", icon: BarChart3, href: "/analytics" },
   { id: "vault", label: "Vault", icon: FolderOpen, href: "/vault" },
   { id: "branding", label: "Branding", icon: Palette, href: "/branding" },
+  { id: "settings", label: "Settings", icon: Settings, href: "/settings" },
 ];
 
 export function Sidebar() {

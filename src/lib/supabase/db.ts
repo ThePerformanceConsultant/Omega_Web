@@ -284,6 +284,11 @@ import type {
   WorkoutLogEntry,
   ExerciseLogEntry,
   SetLogEntry,
+  NotificationItem,
+  NotificationKind,
+  NotificationPrefs,
+  UserSettings,
+  AccountProfile,
 } from "../types";
 
 /** Optional function that resolves a recipe by ID (from the in-memory recipe store). */
@@ -2653,4 +2658,275 @@ export async function getCoachInviteCode(): Promise<string | null> {
     .single();
   if (error) return null;
   return data?.invite_code ?? null;
+}
+
+// ── Notifications + User Settings ───────────────────────
+
+type NotificationRow = {
+  id: number;
+  recipient_id: string;
+  actor_id: string | null;
+  kind: NotificationKind;
+  dedupe_key: string;
+  payload: Record<string, unknown> | null;
+  is_read: boolean;
+  read_at: string | null;
+  created_at: string;
+};
+
+type UserSettingsRow = {
+  user_id: string;
+  notification_prefs: Record<string, unknown> | null;
+  app_prefs: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const notificationKinds: NotificationKind[] = [
+  "message_received",
+  "workout_assigned",
+  "workout_updated",
+  "form_due",
+  "task_due",
+  "meal_plan_published",
+  "insight_published",
+  "form_submitted",
+  "task_completed",
+  "workout_completed",
+  "checkin_submitted",
+];
+
+export function defaultNotificationPrefs(): NotificationPrefs {
+  return {
+    message_received: true,
+    workout_assigned: true,
+    workout_updated: true,
+    form_due: true,
+    task_due: true,
+    meal_plan_published: true,
+    insight_published: true,
+    form_submitted: true,
+    task_completed: true,
+    workout_completed: true,
+    checkin_submitted: true,
+  };
+}
+
+function normalizeNotificationPrefs(raw: Record<string, unknown> | null | undefined): NotificationPrefs {
+  const defaults = defaultNotificationPrefs();
+  if (!raw) return defaults;
+  const out = { ...defaults };
+  for (const kind of notificationKinds) {
+    const value = raw[kind];
+    if (typeof value === "boolean") out[kind] = value;
+  }
+  return out;
+}
+
+function mapNotificationRow(row: NotificationRow): NotificationItem {
+  return {
+    id: Number(row.id),
+    recipientId: row.recipient_id,
+    actorId: row.actor_id ?? null,
+    kind: row.kind,
+    dedupeKey: row.dedupe_key,
+    payload: (row.payload ?? {}) as Record<string, unknown>,
+    isRead: !!row.is_read,
+    readAt: row.read_at ?? null,
+    createdAt: row.created_at,
+  };
+}
+
+function mapUserSettingsRow(row: UserSettingsRow): UserSettings {
+  return {
+    userId: row.user_id,
+    notificationPrefs: normalizeNotificationPrefs(row.notification_prefs),
+    appPrefs: (row.app_prefs ?? {}) as Record<string, unknown>,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function fetchMyNotifications(opts?: {
+  limit?: number;
+  unreadOnly?: boolean;
+  before?: string | null;
+}): Promise<NotificationItem[]> {
+  if (!isSupabaseConfigured()) return [];
+  const client = getClient();
+  const limit = Math.max(1, Math.min(opts?.limit ?? 50, 200));
+  const { data, error } = await client.rpc("fetch_my_notifications", {
+    p_limit: limit,
+    p_unread_only: opts?.unreadOnly ?? false,
+    p_before: opts?.before ?? null,
+  });
+  if (error) throw error;
+  return ((data ?? []) as NotificationRow[]).map(mapNotificationRow);
+}
+
+export async function markMyNotificationsRead(notificationIds?: number[]): Promise<number> {
+  if (!isSupabaseConfigured()) return 0;
+  const client = getClient();
+  const ids = (notificationIds ?? []).filter((id) => Number.isFinite(id));
+  const { data, error } = await client.rpc("mark_my_notifications_read", {
+    p_notification_ids: ids,
+  });
+  if (error) throw error;
+  return Number(data ?? 0);
+}
+
+export async function fetchMyUserSettings(): Promise<UserSettings | null> {
+  if (!isSupabaseConfigured()) return null;
+  const client = getClient();
+  const { data: authData, error: authError } = await client.auth.getUser();
+  if (authError) throw authError;
+  const user = authData.user;
+  if (!user) return null;
+
+  const { data, error } = await client
+    .from("user_settings")
+    .select("user_id, notification_prefs, app_prefs, created_at, updated_at")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    return {
+      userId: user.id,
+      notificationPrefs: defaultNotificationPrefs(),
+      appPrefs: {},
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+  }
+  return mapUserSettingsRow(data as UserSettingsRow);
+}
+
+export async function upsertMyUserSettings(input: {
+  notificationPrefs?: NotificationPrefs;
+  appPrefs?: Record<string, unknown>;
+}): Promise<UserSettings> {
+  if (!isSupabaseConfigured()) {
+    throw new Error("Supabase is not configured.");
+  }
+  const client = getClient();
+  const { data, error } = await client.rpc("upsert_my_user_settings", {
+    p_notification_prefs: input.notificationPrefs ?? null,
+    p_app_prefs: input.appPrefs ?? null,
+  });
+  if (error) throw error;
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) {
+    throw new Error("Failed to save user settings.");
+  }
+  return mapUserSettingsRow(row as UserSettingsRow);
+}
+
+export async function fetchMyAccountProfile(): Promise<AccountProfile | null> {
+  if (!isSupabaseConfigured()) return null;
+  const client = getClient();
+  const { data: authData, error: authError } = await client.auth.getUser();
+  if (authError) throw authError;
+  const user = authData.user;
+  if (!user) return null;
+
+  const { data, error } = await client
+    .from("profiles")
+    .select("id, full_name, avatar_initials")
+    .eq("id", user.id)
+    .single();
+  if (error) throw error;
+
+  return {
+    userId: user.id,
+    email: user.email ?? "",
+    fullName: data?.full_name ?? "",
+    avatarInitials: data?.avatar_initials ?? "",
+  };
+}
+
+export async function updateMyAccountProfile(input: {
+  fullName: string;
+  avatarInitials: string;
+}): Promise<void> {
+  if (!isSupabaseConfigured()) return;
+  const client = getClient();
+  const { data: authData, error: authError } = await client.auth.getUser();
+  if (authError) throw authError;
+  const user = authData.user;
+  if (!user) throw new Error("Not authenticated.");
+
+  const fullName = input.fullName.trim();
+  if (!fullName) throw new Error("Full name is required.");
+
+  const avatarInitials = input.avatarInitials
+    .trim()
+    .toUpperCase()
+    .slice(0, 4);
+
+  const { error } = await client
+    .from("profiles")
+    .update({
+      full_name: fullName,
+      avatar_initials: avatarInitials || null,
+    })
+    .eq("id", user.id);
+  if (error) throw error;
+}
+
+export async function requestMyEmailChange(email: string): Promise<void> {
+  if (!isSupabaseConfigured()) return;
+  const client = getClient();
+  const nextEmail = email.trim().toLowerCase();
+  if (!nextEmail) throw new Error("Email is required.");
+  const { error } = await client.auth.updateUser({ email: nextEmail });
+  if (error) throw error;
+}
+
+export async function sendPasswordReset(email: string, redirectTo?: string): Promise<void> {
+  if (!isSupabaseConfigured()) return;
+  const client = getClient();
+  const targetEmail = email.trim().toLowerCase();
+  if (!targetEmail) throw new Error("Email is required.");
+  const { error } = await client.auth.resetPasswordForEmail(targetEmail, {
+    redirectTo,
+  });
+  if (error) throw error;
+}
+
+export function subscribeToMyNotifications(
+  userId: string,
+  onChange: (item: NotificationItem) => void
+) {
+  const client = getClient();
+  const channel = client
+    .channel(`user_notifications:${userId}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "INSERT",
+        schema: "public",
+        table: "user_notifications",
+        filter: `recipient_id=eq.${userId}`,
+      },
+      (payload) => {
+        if (!payload.new) return;
+        onChange(mapNotificationRow(payload.new as NotificationRow));
+      }
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "UPDATE",
+        schema: "public",
+        table: "user_notifications",
+        filter: `recipient_id=eq.${userId}`,
+      },
+      (payload) => {
+        if (!payload.new) return;
+        onChange(mapNotificationRow(payload.new as NotificationRow));
+      }
+    )
+    .subscribe();
+  return channel;
 }

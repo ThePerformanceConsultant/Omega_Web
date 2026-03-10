@@ -399,6 +399,54 @@ export interface Message {
 }
 
 // ==========================================
+// Notifications + Settings Types
+// ==========================================
+
+export type NotificationKind =
+  | "message_received"
+  | "workout_assigned"
+  | "workout_updated"
+  | "form_due"
+  | "task_due"
+  | "meal_plan_published"
+  | "insight_published"
+  | "form_submitted"
+  | "task_completed"
+  | "workout_completed"
+  | "checkin_submitted";
+
+export type NotificationPayload = Record<string, unknown>;
+
+export interface NotificationItem {
+  id: number;
+  recipientId: string;
+  actorId: string | null;
+  kind: NotificationKind;
+  dedupeKey: string;
+  payload: NotificationPayload;
+  isRead: boolean;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export type NotificationPrefs = Record<NotificationKind, boolean>;
+
+export interface UserSettings {
+  userId: string;
+  notificationPrefs: NotificationPrefs;
+  appPrefs: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountProfile {
+  userId: string;
+  email: string;
+  fullName: string;
+  avatarInitials: string;
+}
+
+// ==========================================
 // Client Dashboard Types
 // ==========================================
 
