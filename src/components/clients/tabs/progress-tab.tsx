@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useId } from "react";
 import { Star, BarChart3, Target, CheckCircle2, XCircle, ListChecks, ChevronDown, ChevronRight, ChevronLeft, Settings2, Activity, Plus, Trash2, Heart, Clock, Flame, Zap } from "lucide-react";
 import { fetchWorkoutLogs, fetchClientTasks, fetchMetricConfigs, fetchMetricEntries, createMetricConfig, updateMetricConfig, deleteMetricConfig, fetchActivitySessions } from "@/lib/supabase/db";
 import type { WorkoutLogEntry, Task, MetricConfig, MetricEntry, ActivitySession } from "@/lib/types";
@@ -11,12 +11,19 @@ import { WorkoutLogDetail } from "./workout-log-viewer";
 function LineChart({
   data,
   color,
-  height = 160,
+  height = 200,
+  targetValue = null,
+  valueFormatter,
 }: {
   data: { date: string; value: number }[];
   color: string;
   height?: number;
+  targetValue?: number | null;
+  valueFormatter?: (value: number) => string;
 }) {
+  const gradientId = useId().replace(/:/g, "");
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
   if (data.length < 2) {
     return (
       <div
@@ -32,31 +39,57 @@ function LineChart({
   const width = 500;
   const chartW = width - padding.left - padding.right;
   const chartH = height - padding.top - padding.bottom;
+  const baselineY = padding.top + chartH;
 
   const values = data.map((d) => d.value);
-  const minV = Math.min(...values);
-  const maxV = Math.max(...values);
+  const domainValues =
+    targetValue !== null && Number.isFinite(targetValue)
+      ? [...values, targetValue]
+      : values;
+  const minV = Math.min(...domainValues);
+  const maxV = Math.max(...domainValues);
   const range = maxV - minV || 1;
+
+  const toY = (value: number) => padding.top + chartH - ((value - minV) / range) * chartH;
 
   const points = data.map((d, i) => {
     const x = padding.left + (i / (data.length - 1)) * chartW;
-    const y = padding.top + chartH - ((d.value - minV) / range) * chartH;
+    const y = toY(d.value);
     return { x, y, date: d.date, value: d.value };
   });
 
   const pathD = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+  const areaD = `${pathD} L ${points[points.length - 1].x} ${baselineY} L ${points[0].x} ${baselineY} Z`;
+
+  const formatTick = (value: number) => {
+    if (Math.abs(value) >= 1000) return Math.round(value).toLocaleString();
+    if (Number.isInteger(value)) return value.toString();
+    return value.toFixed(1);
+  };
 
   // Y-axis labels
   const yLabels = [minV, minV + range / 2, maxV].map((v) => ({
-    value: v.toFixed(1),
-    y: padding.top + chartH - ((v - minV) / range) * chartH,
+    value: formatTick(v),
+    y: toY(v),
   }));
 
   // X-axis labels (first, middle, last)
   const xIdxs = [...new Set([0, Math.floor(data.length / 2), data.length - 1])];
+  const hoveredPoint =
+    hoveredIndex !== null && points[hoveredIndex] ? points[hoveredIndex] : null;
+  const targetY =
+    targetValue !== null && Number.isFinite(targetValue) ? toY(targetValue) : null;
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ maxHeight: height }}>
+      <defs>
+        <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor={color} stopOpacity={0.36} />
+          <stop offset="60%" stopColor={color} stopOpacity={0.12} />
+          <stop offset="100%" stopColor={color} stopOpacity={0.02} />
+        </linearGradient>
+      </defs>
+
       {/* Grid lines */}
       {yLabels.map((yl, i) => (
         <g key={i}>
@@ -80,6 +113,30 @@ function LineChart({
         </g>
       ))}
 
+      {targetY !== null && (
+        <g>
+          <line
+            x1={padding.left}
+            y1={targetY}
+            x2={width - padding.right}
+            y2={targetY}
+            stroke={color}
+            strokeWidth={1.5}
+            strokeDasharray="4 4"
+            opacity={0.8}
+          />
+          <text
+            x={width - padding.right}
+            y={Math.max(padding.top + 10, targetY - 6)}
+            textAnchor="end"
+            fontSize={10}
+            className="fill-gray-500"
+          >
+            Target {formatTick(targetValue as number)}
+          </text>
+        </g>
+      )}
+
       {/* X-axis labels */}
       {xIdxs.map((idx) => {
         const p = points[idx];
@@ -100,13 +157,68 @@ function LineChart({
         );
       })}
 
+      {/* Area */}
+      <path d={areaD} fill={`url(#${gradientId})`} />
+
       {/* Line */}
       <path d={pathD} fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
 
       {/* Dots */}
       {points.map((p, i) => (
-        <circle key={i} cx={p.x} cy={p.y} r={3.5} fill={color} stroke="white" strokeWidth={2} />
+        <g key={`${p.date}-${i}`}>
+          <circle
+            cx={p.x}
+            cy={p.y}
+            r={hoveredIndex === i ? 5 : 3.5}
+            fill={color}
+            stroke="white"
+            strokeWidth={2}
+            onMouseEnter={() => setHoveredIndex(i)}
+            onMouseLeave={() => setHoveredIndex(null)}
+          >
+            <title>{`${p.date}: ${valueFormatter ? valueFormatter(p.value) : formatTick(p.value)}`}</title>
+          </circle>
+        </g>
       ))}
+
+      {hoveredPoint && (
+        <g pointerEvents="none">
+          <line
+            x1={hoveredPoint.x}
+            y1={padding.top}
+            x2={hoveredPoint.x}
+            y2={baselineY}
+            stroke={color}
+            strokeOpacity={0.28}
+            strokeWidth={1}
+            strokeDasharray="3 3"
+          />
+          <rect
+            x={Math.min(width - 160, hoveredPoint.x + 10)}
+            y={Math.max(8, hoveredPoint.y - 42)}
+            width={150}
+            height={34}
+            rx={6}
+            fill="rgba(17,17,17,0.92)"
+          />
+          <text
+            x={Math.min(width - 150, hoveredPoint.x + 18)}
+            y={Math.max(24, hoveredPoint.y - 26)}
+            fontSize={10}
+            className="fill-white"
+          >
+            {hoveredPoint.date}
+          </text>
+          <text
+            x={Math.min(width - 150, hoveredPoint.x + 18)}
+            y={Math.max(37, hoveredPoint.y - 12)}
+            fontSize={11}
+            className="fill-white"
+          >
+            {valueFormatter ? valueFormatter(hoveredPoint.value) : formatTick(hoveredPoint.value)}
+          </text>
+        </g>
+      )}
     </svg>
   );
 }
@@ -664,7 +776,11 @@ function MetricsDataDisplay({
         <LineChart
           data={chartData}
           color={selectedConfig.color || "#c4841d"}
-          height={160}
+          height={220}
+          targetValue={selectedConfig.dailyTarget}
+          valueFormatter={(value) =>
+            `${value.toFixed(selectedConfig.unit === "steps" ? 0 : 1)}${selectedConfig.unit ? ` ${selectedConfig.unit}` : ""}`
+          }
         />
       )}
 
@@ -863,7 +979,8 @@ function ActivitySessionsSection({ sessions }: { sessions: ActivitySession[] }) 
                             value: h.bpm,
                           }))}
                           color={meta.color}
-                          height={140}
+                          height={170}
+                          valueFormatter={(value) => `${Math.round(value)} bpm`}
                         />
                       </div>
                     )}
@@ -1013,7 +1130,8 @@ function WeeklySrpeSection({ sessions }: { sessions: ActivitySession[] }) {
           <LineChart
             data={weeklyData.map((w) => ({ date: w.monday, value: w.totalSrpe }))}
             color="#eab308"
-            height={160}
+            height={200}
+            valueFormatter={(value) => `${Math.round(value)} sRPE`}
           />
         </div>
       )}
@@ -1233,7 +1351,8 @@ export function ProgressTab({ clientId }: { clientId: string }) {
               <LineChart
                 data={exerciseData.map((e) => ({ date: e.date, value: e.estimatedOneRM }))}
                 color="#c4841d"
-                height={140}
+                height={200}
+                valueFormatter={(value) => `${value.toFixed(1)} kg`}
               />
             </div>
             <div>
@@ -1241,7 +1360,8 @@ export function ProgressTab({ clientId }: { clientId: string }) {
               <LineChart
                 data={exerciseData.map((e) => ({ date: e.date, value: e.totalVolume }))}
                 color="#2d8a4e"
-                height={140}
+                height={200}
+                valueFormatter={(value) => `${Math.round(value).toLocaleString()} kg`}
               />
             </div>
             <div className="flex items-center gap-6 pt-3 border-t border-black/5 text-xs text-muted">

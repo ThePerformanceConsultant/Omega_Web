@@ -15,6 +15,7 @@ interface ExerciseLibrarySidebarProps {
   editing: boolean;
   onAddExercise: (ex: Exercise) => void;
   onOpenExerciseEditor: (exerciseName: string) => void;
+  onCreateExercise?: (exerciseName: string) => void;
   onExerciseDragStart?: (exercise: Exercise) => void;
   onExerciseDragEnd?: () => void;
 }
@@ -24,6 +25,7 @@ export function ExerciseLibrarySidebar({
   editing,
   onAddExercise,
   onOpenExerciseEditor,
+  onCreateExercise,
   onExerciseDragStart,
   onExerciseDragEnd,
 }: ExerciseLibrarySidebarProps) {
@@ -131,6 +133,17 @@ export function ExerciseLibrarySidebar({
           </div>
           );
         })}
+        {filteredExercises.length === 0 && exSearch.trim().length > 1 && editing && (
+          <div className="px-2 py-4">
+            <p className="text-[11px] text-muted text-center mb-2">No exercises found</p>
+            <button
+              onClick={() => onCreateExercise?.(exSearch.trim())}
+              className="w-full px-2.5 py-2 rounded-lg border border-dashed border-accent/35 bg-accent/5 text-accent text-xs font-medium hover:bg-accent/10 transition-colors"
+            >
+              + Create &quot;{exSearch.trim()}&quot;
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -38,6 +38,23 @@ type IngredientCatalogRow = {
   portions: Array<{ label?: string; gramWeight?: number }> | null;
 };
 
+export type CreateIngredientCatalogInput = {
+  name: string;
+  category?: string | null;
+  calories?: number | null;
+  protein?: number | null;
+  carbs?: number | null;
+  fat?: number | null;
+  fiber?: number | null;
+  portionLabel?: string | null;
+  portionGramWeight?: number | null;
+};
+
+function toFiniteNumber(value: number | null | undefined, fallback = 0): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
 function normalizeIngredientSearch(value: string): string {
   return value
     .normalize("NFKD")
@@ -183,6 +200,72 @@ export async function searchIngredientCatalog(
     })
     .slice(0, limit)
     .map(({ row }) => toIngredientCatalogItem(row));
+}
+
+export async function createIngredientCatalogItem(
+  input: CreateIngredientCatalogInput
+): Promise<USDAIngredient> {
+  if (!isSupabaseConfigured()) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error("Ingredient name is required.");
+  }
+
+  const client = getClient();
+  const coachId = (await getCoachId()) ?? "unknown";
+  const timestamp = Date.now();
+  const nonce = Math.floor(Math.random() * 1000);
+  const idSeed = `${timestamp}${String(nonce).padStart(3, "0")}`;
+  const fdcId = Number(`9${idSeed}`);
+
+  const calories = toFiniteNumber(input.calories);
+  const protein = toFiniteNumber(input.protein);
+  const carbs = toFiniteNumber(input.carbs);
+  const fat = toFiniteNumber(input.fat);
+  const fiber = toFiniteNumber(input.fiber);
+  const normalizedCategory = (input.category ?? "").trim() || "Custom";
+
+  const portions: Array<{ label: string; gramWeight: number }> = [];
+  const portionLabel = (input.portionLabel ?? "").trim();
+  const portionGramWeight = toFiniteNumber(input.portionGramWeight, 0);
+  if (portionLabel && portionGramWeight > 0) {
+    portions.push({ label: portionLabel, gramWeight: portionGramWeight });
+  }
+  portions.push({ label: "100 g", gramWeight: 100 });
+
+  const row = {
+    id: `open_food_facts:coach:${coachId}:${idSeed}`,
+    source: "open_food_facts",
+    source_ref: `coach:${coachId}:${idSeed}`,
+    fdc_id: fdcId,
+    name,
+    category: normalizedCategory,
+    data_type: "coach_custom",
+    calories,
+    protein_g: protein,
+    carbs_g: carbs,
+    fat_g: fat,
+    fiber_g: fiber,
+    nutrients: {
+      calories,
+      protein,
+      carbs,
+      fat,
+      fiber,
+    },
+    portions,
+  };
+
+  const { data, error } = await client
+    .from("ingredient_catalog")
+    .insert(row)
+    .select("source,fdc_id,name,category,nutrients,portions")
+    .single();
+  if (error) throw error;
+  return toIngredientCatalogItem(data as IngredientCatalogRow);
 }
 
 // ── Meal Plans ──────────────────────────────────────────

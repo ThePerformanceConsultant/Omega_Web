@@ -44,6 +44,7 @@ import {
 } from "@/lib/ingredient-data";
 import type { USDAIngredient } from "@/lib/ingredient-data";
 import {
+  createIngredientCatalogItem,
   fetchClientExtendedInfo,
   fetchIngredientCatalogCategories,
   fetchNutritionOnboardingData,
@@ -371,6 +372,43 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
     [remoteIngredientCategories, supabaseEnabled]
   );
 
+  const handleCreateIngredientFromSearch = async () => {
+    const name = ingredientSearch.trim();
+    if (!name) return;
+
+    const caloriesRaw = window.prompt("Calories per 100g", "0");
+    if (caloriesRaw === null) return;
+    const proteinRaw = window.prompt("Protein (g) per 100g", "0");
+    if (proteinRaw === null) return;
+    const carbsRaw = window.prompt("Carbs (g) per 100g", "0");
+    if (carbsRaw === null) return;
+    const fatRaw = window.prompt("Fat (g) per 100g", "0");
+    if (fatRaw === null) return;
+    const fiberRaw = window.prompt("Fibre (g) per 100g", "0");
+    if (fiberRaw === null) return;
+    const portionLabel = window.prompt("Portion label (optional, e.g. packet, scoop)", "") ?? "";
+    const portionGramWeight =
+      portionLabel.trim().length > 0
+        ? Number(window.prompt(`Grams in 1 ${portionLabel.trim()} (optional)`, "0") ?? "0")
+        : 0;
+
+    const created = await createIngredientCatalogItem({
+      name,
+      category: ingredientCategory || "Custom",
+      calories: Number(caloriesRaw),
+      protein: Number(proteinRaw),
+      carbs: Number(carbsRaw),
+      fat: Number(fatRaw),
+      fiber: Number(fiberRaw),
+      portionLabel: portionLabel.trim().length > 0 ? portionLabel.trim() : null,
+      portionGramWeight: Number.isFinite(portionGramWeight) ? portionGramWeight : 0,
+    });
+
+    setIngredientSearch(created.name);
+    setIngredientCategory("");
+    setRemoteIngredients((prev) => [created, ...(prev ?? [])]);
+  };
+
   // ── Day totals (uses active option per slot) ───────────────────────────
 
   const dayTotals = useMemo(() => {
@@ -535,7 +573,7 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
                     type="text"
                     value={ingredientSearch}
                     onChange={(e) => setIngredientSearch(e.target.value)}
-                    placeholder="Search USDA foods..."
+                    placeholder="Search ingredients..."
                     className="w-full pl-8 pr-3 py-1.5 rounded-md bg-black/5 border border-black/10 text-xs text-foreground placeholder-muted/50 focus:outline-none focus:border-accent/50"
                   />
                 </div>
@@ -578,9 +616,22 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
                   <p className="text-xs text-muted text-center py-3">Searching...</p>
                 )}
                 {filteredIngredients.length === 0 && (
-                  <p className="text-xs text-muted text-center py-8">
-                    No ingredients found
-                  </p>
+                  <div className="px-3 py-8 text-center space-y-2">
+                    <p className="text-xs text-muted">No ingredients found</p>
+                    {supabaseEnabled && ingredientSearch.trim().length > 1 && (
+                      <button
+                        onClick={() => {
+                          void handleCreateIngredientFromSearch().catch((error) => {
+                            console.error("[MealPlanBuilder] Failed to create ingredient:", error);
+                            alert("Failed to create ingredient. Please try again.");
+                          });
+                        }}
+                        className="px-3 py-1.5 rounded-lg border border-dashed border-accent/35 bg-accent/5 text-accent text-xs font-medium hover:bg-accent/10 transition-colors"
+                      >
+                        + Add &quot;{ingredientSearch.trim()}&quot;
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </>
@@ -931,7 +982,7 @@ function DraggableIngredientItem({
     >
       <GripVertical size={10} className="text-muted/30 shrink-0" />
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium text-foreground truncate group-hover:text-accent transition-colors">
+        <p className="text-xs font-medium text-foreground whitespace-normal break-words leading-snug group-hover:text-accent transition-colors">
           {ingredient.name}
         </p>
         <p className="text-[10px] text-muted">{ingredient.category}</p>

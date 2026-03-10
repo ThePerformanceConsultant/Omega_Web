@@ -526,7 +526,7 @@ function IngredientOptionContent({ option }: { option: MealOption }) {
         return (
           <div key={ing.id} className="flex items-center gap-2 text-[10px]">
             <span className="flex-1 text-foreground truncate">
-              {usda?.name ?? `FDC#${ing.fdcId}`}
+              {usda?.name ?? ing.name ?? `FDC#${ing.fdcId}`}
             </span>
             <span className="text-muted tabular-nums shrink-0">
               {Math.round(ing.gramWeight)}g

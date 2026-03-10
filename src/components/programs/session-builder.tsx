@@ -9,6 +9,7 @@ import {
   Dumbbell,
   MoreHorizontal,
   List as ListIcon,
+  Trash2,
 } from "lucide-react";
 import {
   ProgramWithPhases,
@@ -20,7 +21,7 @@ import { EXERCISES } from "@/lib/exercise-data";
 import { Exercise, SET_TYPE_OPTIONS, SetType } from "@/lib/types";
 import { ExerciseEditorModal } from "@/components/exercises/exercise-editor-modal";
 import { ExerciseLibrarySidebar } from "./exercise-library-sidebar";
-import { fetchExercises, isSupabaseConfigured } from "@/lib/supabase/db";
+import { fetchExercises, getCoachId, isSupabaseConfigured, saveExercise } from "@/lib/supabase/db";
 
 interface SessionBuilderProps {
   program: ProgramWithPhases;
@@ -316,14 +317,99 @@ export function SessionBuilder({
     setWorkoutIdx(currentLen);
   };
 
+  const removeWorkout = (targetIdx: number) => {
+    onProgramChange((p) => {
+      const workouts = p.phases[phaseIdx].workouts;
+      if (!workouts[targetIdx]) return;
+      workouts.splice(targetIdx, 1);
+      workouts.forEach((wk, index) => {
+        wk.sort_order = index;
+      });
+    });
+    setWorkoutIdx((current) => {
+      if (current > targetIdx) return current - 1;
+      if (current === targetIdx) return Math.max(0, targetIdx - 1);
+      return current;
+    });
+  };
+
+  const removeSection = (sectionIdx: number) => {
+    updateWorkout((wk) => {
+      if (!wk.workout_sections[sectionIdx]) return;
+      wk.workout_sections.splice(sectionIdx, 1);
+      wk.workout_sections.forEach((section, index) => {
+        section.sort_order = index;
+      });
+      for (const ex of wk.exercises) {
+        if (ex.section_index === sectionIdx) {
+          ex.section_index = -1;
+        } else if (ex.section_index > sectionIdx) {
+          ex.section_index -= 1;
+        }
+      }
+    });
+  };
+
+  const createDraftExercise = (exerciseName: string): Exercise => ({
+    id: 0,
+    coach_id: null,
+    name: exerciseName.trim(),
+    primary_muscle_group: "",
+    muscle_groups: [],
+    modality: "Strength",
+    movement_patterns: [],
+    video_url: null,
+    thumbnail_url: null,
+    instructions: null,
+    default_note: null,
+    default_reps_min: 8,
+    default_reps_max: 12,
+    default_rpe: 8,
+    default_rest_seconds: 90,
+    default_tracking_fields: ["Reps", "Weight", "RPE"],
+    alternate_exercise_ids: [],
+    is_global: false,
+    created_at: new Date().toISOString(),
+  });
+
   const openExerciseEditor = (exerciseName: string) => {
-    const q = exerciseName.toLowerCase();
+    const normalized = exerciseName.trim();
+    if (!normalized) return;
+    const q = normalized.toLowerCase();
     let ex = exerciseLibrary.find((e) => e.name.toLowerCase() === q);
     if (!ex) ex = exerciseLibrary.find((e) => e.name.toLowerCase().includes(q));
     if (!ex) ex = exerciseLibrary.find((e) => q.includes(e.name.toLowerCase()));
-    if (ex) {
-      setEditingExercise(ex);
-      setIsExEditorOpen(true);
+    setEditingExercise(ex ?? createDraftExercise(normalized));
+    setIsExEditorOpen(true);
+  };
+
+  const handleExerciseSave = async (exercise: Exercise) => {
+    try {
+      if (isSupabaseConfigured()) {
+        const coachId = (await getCoachId()) ?? "";
+        const saved = await saveExercise(exercise, coachId);
+        setExerciseLibrary((prev) =>
+          [...prev.filter((item) => item.id !== saved.id), saved].sort((a, b) =>
+            a.name.localeCompare(b.name)
+          )
+        );
+      } else {
+        const localId =
+          exercise.id && exercise.id !== 0
+            ? exercise.id
+            : Math.max(0, ...exerciseLibrary.map((item) => item.id)) + 1;
+        const localSaved = { ...exercise, id: localId };
+        setExerciseLibrary((prev) =>
+          [...prev.filter((item) => item.id !== localSaved.id), localSaved].sort((a, b) =>
+            a.name.localeCompare(b.name)
+          )
+        );
+      }
+      setIsExEditorOpen(false);
+      setEditingExercise(null);
+    } catch (error) {
+      console.error("[SessionBuilder] Failed to save exercise:", error);
+      alert("Failed to save exercise. Please try again.");
     }
   };
 
@@ -750,6 +836,7 @@ export function SessionBuilder({
         editing={editing}
         onAddExercise={addExercise}
         onOpenExerciseEditor={openExerciseEditor}
+        onCreateExercise={(name) => openExerciseEditor(name)}
         onExerciseDragStart={(exercise) => {
           if (!editing) return;
           setDragLibraryExercise(exercise);
@@ -786,38 +873,52 @@ export function SessionBuilder({
         {/* Workout Tabs — dark */}
         <div className="px-5 py-2 border-b border-white/10 flex gap-1.5 items-center overflow-x-auto shrink-0 bg-[#1a1a1a]">
           {phase?.workouts.map((w, i) => (
-            <button
-              key={w.id}
-              onClick={() => setWorkoutIdx(i)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
-                workoutIdx === i
-                  ? "bg-accent/20 text-accent"
-                  : "bg-white/8 text-white/50 hover:text-white"
-              }`}
-            >
-              <div className="flex flex-col items-center gap-0.5">
-                {editing ? (
-                  <input
-                    className="bg-transparent border-none text-center outline-none font-semibold text-white"
-                    style={{ width: Math.max(60, w.name.length * 8) }}
-                    value={w.name}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => {
-                      onProgramChange((p) => {
-                        p.phases[phaseIdx].workouts[i].name = e.target.value;
-                      });
-                    }}
-                  />
-                ) : (
-                  <span>{w.name}</span>
-                )}
-                {typeof w.scheduled_weekday === "number" && (
-                  <span className="text-[10px] opacity-80">
-                    {WEEKDAY_OPTIONS.find((opt) => opt.value === w.scheduled_weekday)?.short ?? "Day"}
-                  </span>
-                )}
-              </div>
-            </button>
+            <div key={w.id} className="relative">
+              <button
+                onClick={() => setWorkoutIdx(i)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
+                  workoutIdx === i
+                    ? "bg-accent/20 text-accent"
+                    : "bg-white/8 text-white/50 hover:text-white"
+                }`}
+              >
+                <div className="flex flex-col items-center gap-0.5">
+                  {editing ? (
+                    <input
+                      className="bg-transparent border-none text-center outline-none font-semibold text-white"
+                      style={{ width: Math.max(60, w.name.length * 8) }}
+                      value={w.name}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        onProgramChange((p) => {
+                          p.phases[phaseIdx].workouts[i].name = e.target.value;
+                        });
+                      }}
+                    />
+                  ) : (
+                    <span>{w.name}</span>
+                  )}
+                  {typeof w.scheduled_weekday === "number" && (
+                    <span className="text-[10px] opacity-80">
+                      {WEEKDAY_OPTIONS.find((opt) => opt.value === w.scheduled_weekday)?.short ?? "Day"}
+                    </span>
+                  )}
+                </div>
+              </button>
+              {editing && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeWorkout(i);
+                  }}
+                  className="absolute -top-1 -right-1 p-1 rounded-full bg-red-500/90 text-white hover:bg-red-500 transition-colors"
+                  title="Delete day"
+                  aria-label={`Delete ${w.name}`}
+                >
+                  <Trash2 size={11} />
+                </button>
+              )}
+            </div>
           ))}
           {editing && (
             <button
@@ -928,6 +1029,16 @@ export function SessionBuilder({
                           />
                         ) : (
                           <span className="text-sm font-bold">{sec.name}</span>
+                        )}
+                        {editing && (
+                          <button
+                            onClick={() => removeSection(si)}
+                            className="ml-auto p-1 rounded text-red-600 hover:bg-red-50 transition-colors"
+                            title="Delete section"
+                            aria-label={`Delete ${sec.name}`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
                         )}
                       </div>
                       {/* Section Notes */}
@@ -1082,10 +1193,7 @@ export function SessionBuilder({
         <ExerciseEditorModal
           exercise={editingExercise}
           allExercises={exerciseLibrary}
-          onSave={() => {
-            setIsExEditorOpen(false);
-            setEditingExercise(null);
-          }}
+          onSave={handleExerciseSave}
           onClose={() => {
             setIsExEditorOpen(false);
             setEditingExercise(null);
