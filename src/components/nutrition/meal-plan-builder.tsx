@@ -58,6 +58,7 @@ import { MealSlotCard, createEmptyOption } from "./meal-slot-card";
 import { MealPlanDrawer } from "./meal-plan-drawer";
 import { RecipeDetailPanel } from "./recipe-detail-panel";
 import { MicronutrientCollapsible } from "./micronutrient-collapsible";
+import { CreateIngredientModal } from "@/components/ingredients/create-ingredient-modal";
 
 interface MealPlanBuilderProps {
   plan: MealPlanTemplate;
@@ -120,6 +121,8 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
   const [remoteIngredients, setRemoteIngredients] = useState<USDAIngredient[] | null>(null);
   const [remoteIngredientCategories, setRemoteIngredientCategories] = useState<string[]>([]);
   const [isRemoteIngredientLoading, setIsRemoteIngredientLoading] = useState(false);
+  const [showCreateIngredient, setShowCreateIngredient] = useState(false);
+  const [isCreatingIngredient, setIsCreatingIngredient] = useState(false);
 
   const supabaseEnabled = isSupabaseConfigured();
 
@@ -372,42 +375,27 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
     [remoteIngredientCategories, supabaseEnabled]
   );
 
-  const handleCreateIngredientFromSearch = async () => {
-    const name = ingredientSearch.trim();
-    if (!name) return;
-
-    const caloriesRaw = window.prompt("Calories per 100g", "0");
-    if (caloriesRaw === null) return;
-    const proteinRaw = window.prompt("Protein (g) per 100g", "0");
-    if (proteinRaw === null) return;
-    const carbsRaw = window.prompt("Carbs (g) per 100g", "0");
-    if (carbsRaw === null) return;
-    const fatRaw = window.prompt("Fat (g) per 100g", "0");
-    if (fatRaw === null) return;
-    const fiberRaw = window.prompt("Fibre (g) per 100g", "0");
-    if (fiberRaw === null) return;
-    const portionLabel = window.prompt("Portion label (optional, e.g. packet, scoop)", "") ?? "";
-    const portionGramWeight =
-      portionLabel.trim().length > 0
-        ? Number(window.prompt(`Grams in 1 ${portionLabel.trim()} (optional)`, "0") ?? "0")
-        : 0;
-
-    const created = await createIngredientCatalogItem({
-      name,
-      category: ingredientCategory || "Custom",
-      calories: Number(caloriesRaw),
-      protein: Number(proteinRaw),
-      carbs: Number(carbsRaw),
-      fat: Number(fatRaw),
-      fiber: Number(fiberRaw),
-      portionLabel: portionLabel.trim().length > 0 ? portionLabel.trim() : null,
-      portionGramWeight: Number.isFinite(portionGramWeight) ? portionGramWeight : 0,
-    });
-
-    setIngredientSearch(created.name);
-    setIngredientCategory("");
-    setRemoteIngredients((prev) => [created, ...(prev ?? [])]);
-  };
+  async function handleCreateIngredient(payload: Parameters<typeof createIngredientCatalogItem>[0]) {
+    setIsCreatingIngredient(true);
+    try {
+      const created = await createIngredientCatalogItem(payload);
+      registerIngredient(created);
+      setIngredientSearch(created.name);
+      setIngredientCategory("");
+      setRemoteIngredients((prev) => {
+        const next = prev ?? [];
+        return [created, ...next.filter((item) => item.fdcId !== created.fdcId)];
+      });
+      setRemoteIngredientCategories((prev) =>
+        prev.includes(created.category)
+          ? prev
+          : [...prev, created.category].sort((a, b) => a.localeCompare(b))
+      );
+      setShowCreateIngredient(false);
+    } finally {
+      setIsCreatingIngredient(false);
+    }
+  }
 
   // ── Day totals (uses active option per slot) ───────────────────────────
 
@@ -539,6 +527,14 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none"
                   />
                 </div>
+                {supabaseEnabled && (
+                  <button
+                    onClick={() => setShowCreateIngredient(true)}
+                    className="w-full px-3 py-1.5 rounded-lg border border-accent/30 bg-accent/5 text-accent text-xs font-medium hover:bg-accent/10 transition-colors"
+                  >
+                    + Create Ingredient
+                  </button>
+                )}
               </div>
 
               {/* Drag hint */}
@@ -620,15 +616,10 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
                     <p className="text-xs text-muted">No ingredients found</p>
                     {supabaseEnabled && ingredientSearch.trim().length > 1 && (
                       <button
-                        onClick={() => {
-                          void handleCreateIngredientFromSearch().catch((error) => {
-                            console.error("[MealPlanBuilder] Failed to create ingredient:", error);
-                            alert("Failed to create ingredient. Please try again.");
-                          });
-                        }}
+                        onClick={() => setShowCreateIngredient(true)}
                         className="px-3 py-1.5 rounded-lg border border-dashed border-accent/35 bg-accent/5 text-accent text-xs font-medium hover:bg-accent/10 transition-colors"
                       >
-                        + Add &quot;{ingredientSearch.trim()}&quot;
+                        + Create &quot;{ingredientSearch.trim()}&quot;
                       </button>
                     )}
                   </div>
@@ -880,6 +871,18 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
             onSave={handleDrawerSave}
             clientInfo={clientInfo}
             onboardingData={onboardingData}
+          />
+        )}
+
+        {showCreateIngredient && (
+          <CreateIngredientModal
+            title="Create Ingredient"
+            initialName={ingredientSearch}
+            initialCategory={ingredientCategory}
+            categoryOptions={ingredientCategories}
+            submitting={isCreatingIngredient}
+            onClose={() => setShowCreateIngredient(false)}
+            onCreate={handleCreateIngredient}
           />
         )}
       </div>

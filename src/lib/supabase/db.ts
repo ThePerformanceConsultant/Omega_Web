@@ -34,6 +34,7 @@ type IngredientCatalogRow = {
   fdc_id: number;
   name: string;
   category: string | null;
+  data_type: string | null;
   nutrients: Record<string, unknown> | null;
   portions: Array<{ label?: string; gramWeight?: number }> | null;
 };
@@ -41,18 +42,22 @@ type IngredientCatalogRow = {
 export type CreateIngredientCatalogInput = {
   name: string;
   category?: string | null;
-  calories?: number | null;
-  protein?: number | null;
-  carbs?: number | null;
-  fat?: number | null;
-  fiber?: number | null;
-  portionLabel?: string | null;
-  portionGramWeight?: number | null;
+  nutrients?: Record<string, number | string | null | undefined>;
+  portions?: Array<{
+    label: string;
+    gramWeight: number | string | null | undefined;
+  }>;
 };
 
 function toFiniteNumber(value: number | null | undefined, fallback = 0): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function toOptionalFiniteNumber(value: number | string | null | undefined): number | null {
+  if (value == null || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function normalizeIngredientSearch(value: string): string {
@@ -124,6 +129,7 @@ function toIngredientCatalogItem(row: IngredientCatalogRow): USDAIngredient {
     fdcId: Number(row.fdc_id),
     name: row.name ?? "",
     category: row.category ?? "Uncategorized",
+    source: row.data_type === "coach_custom" ? "coach_custom" : row.source,
     nutrients,
     portions,
   };
@@ -174,7 +180,7 @@ export async function searchIngredientCatalog(
   const fetchLimit = Math.max(limit * 5, 100);
   let request = client
     .from("ingredient_catalog")
-    .select("source,fdc_id,name,category,nutrients,portions")
+    .select("source,fdc_id,name,category,data_type,nutrients,portions")
     .order("name")
     .limit(fetchLimit);
 
@@ -221,20 +227,35 @@ export async function createIngredientCatalogItem(
   const idSeed = `${timestamp}${String(nonce).padStart(3, "0")}`;
   const fdcId = Number(`9${idSeed}`);
 
-  const calories = toFiniteNumber(input.calories);
-  const protein = toFiniteNumber(input.protein);
-  const carbs = toFiniteNumber(input.carbs);
-  const fat = toFiniteNumber(input.fat);
-  const fiber = toFiniteNumber(input.fiber);
+  const nutrientInput = input.nutrients ?? {};
+  const normalizedNutrients: Record<string, number> = {};
+  for (const [key, rawValue] of Object.entries(nutrientInput)) {
+    const numeric = toOptionalFiniteNumber(rawValue);
+    if (numeric != null) {
+      normalizedNutrients[key] = numeric;
+    }
+  }
+
+  const calories = toOptionalFiniteNumber(normalizedNutrients.calories);
+  const protein = toOptionalFiniteNumber(normalizedNutrients.protein);
+  const carbs = toOptionalFiniteNumber(normalizedNutrients.carbohydrate);
+  const fat = toOptionalFiniteNumber(normalizedNutrients.totalFat);
+  const fiber = toOptionalFiniteNumber(normalizedNutrients.fiber);
   const normalizedCategory = (input.category ?? "").trim() || "Custom";
 
-  const portions: Array<{ label: string; gramWeight: number }> = [];
-  const portionLabel = (input.portionLabel ?? "").trim();
-  const portionGramWeight = toFiniteNumber(input.portionGramWeight, 0);
-  if (portionLabel && portionGramWeight > 0) {
-    portions.push({ label: portionLabel, gramWeight: portionGramWeight });
+  const portions: Array<{ label: string; gramWeight: number }> = [{ label: "100 g", gramWeight: 100 }];
+  for (const portion of input.portions ?? []) {
+    const label = (portion.label ?? "").trim();
+    const gramWeight = toOptionalFiniteNumber(portion.gramWeight);
+    if (!label || gramWeight == null || gramWeight <= 0) continue;
+    const duplicate = portions.some(
+      (existing) => existing.label.toLowerCase() === label.toLowerCase()
+        && Math.abs(existing.gramWeight - gramWeight) < 0.0001
+    );
+    if (!duplicate) {
+      portions.push({ label, gramWeight });
+    }
   }
-  portions.push({ label: "100 g", gramWeight: 100 });
 
   const row = {
     id: `open_food_facts:coach:${coachId}:${idSeed}`,
@@ -244,25 +265,19 @@ export async function createIngredientCatalogItem(
     name,
     category: normalizedCategory,
     data_type: "coach_custom",
-    calories,
-    protein_g: protein,
-    carbs_g: carbs,
-    fat_g: fat,
-    fiber_g: fiber,
-    nutrients: {
-      calories,
-      protein,
-      carbs,
-      fat,
-      fiber,
-    },
+    calories: calories ?? 0,
+    protein_g: protein ?? 0,
+    carbs_g: carbs ?? 0,
+    fat_g: fat ?? 0,
+    fiber_g: fiber ?? 0,
+    nutrients: normalizedNutrients,
     portions,
   };
 
   const { data, error } = await client
     .from("ingredient_catalog")
     .insert(row)
-    .select("source,fdc_id,name,category,nutrients,portions")
+    .select("source,fdc_id,name,category,data_type,nutrients,portions")
     .single();
   if (error) throw error;
   return toIngredientCatalogItem(data as IngredientCatalogRow);

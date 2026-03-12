@@ -14,6 +14,13 @@ interface IngredientDetailModalProps {
   onClose: () => void;
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  usda_survey: "USDA",
+  mccance_widdowson: "McCance",
+  open_food_facts: "Open Food Facts",
+  coach_custom: "Custom",
+};
+
 /** Compute nutrient value scaled to a given portion gram weight.
  *  Stored values are per 100 g. */
 function scaleNutrient(per100g: number | undefined, gramWeight: number): number | null {
@@ -74,6 +81,7 @@ export function IngredientDetailModal({ ingredient, onClose }: IngredientDetailM
   const calories = scaled.calories;
 
   const grouped = useMemo(() => groupNutrients(NUTRIENT_DEFINITIONS), []);
+  const sourceLabel = SOURCE_LABELS[ingredient.source ?? "usda_survey"] ?? "USDA";
 
   function toggleGroup(group: NutrientGroup) {
     setExpandedGroups((prev) => {
@@ -108,7 +116,7 @@ export function IngredientDetailModal({ ingredient, onClose }: IngredientDetailM
               <div className="flex items-center gap-2 mt-1.5">
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-accent/10 text-accent">
                   <Database size={9} />
-                  USDA
+                  {sourceLabel}
                 </span>
                 <span className="text-xs text-muted">{ingredient.category}</span>
               </div>

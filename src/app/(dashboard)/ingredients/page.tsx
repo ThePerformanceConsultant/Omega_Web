@@ -4,8 +4,10 @@ import { useState, useMemo, useEffect } from "react";
 import { Search, Filter, X, Database, ChevronDown } from "lucide-react";
 import { USDA_INGREDIENTS, INGREDIENT_CATEGORIES, USDAIngredient } from "@/lib/ingredient-data";
 import { IngredientDetailModal } from "@/components/ingredients/ingredient-detail-modal";
+import { CreateIngredientModal } from "@/components/ingredients/create-ingredient-modal";
 import { createClient } from "@/lib/supabase/client";
 import {
+  createIngredientCatalogItem,
   fetchIngredientCatalogCategories,
   fetchIngredientCatalogCount,
   isSupabaseConfigured,
@@ -21,6 +23,13 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: "carbs", label: "Carbs" },
   { value: "fat", label: "Fat" },
 ];
+
+const SOURCE_LABELS: Record<string, string> = {
+  usda_survey: "USDA",
+  mccance_widdowson: "McCance",
+  open_food_facts: "Open Food Facts",
+  coach_custom: "Custom",
+};
 
 function getNutrient(ingredient: USDAIngredient, key: string): number {
   return ingredient.nutrients[key] ?? 0;
@@ -48,6 +57,8 @@ export default function IngredientsPage() {
   const [remoteTotalCount, setRemoteTotalCount] = useState(0);
   const [isRemoteLoading, setIsRemoteLoading] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  const [showCreateIngredient, setShowCreateIngredient] = useState(false);
+  const [isCreatingIngredient, setIsCreatingIngredient] = useState(false);
 
   const supabaseEnabled = isSupabaseConfigured();
 
@@ -205,6 +216,24 @@ export default function IngredientsPage() {
     }
   }
 
+  async function handleCreateIngredient(payload: Parameters<typeof createIngredientCatalogItem>[0]) {
+    setIsCreatingIngredient(true);
+    try {
+      const created = await createIngredientCatalogItem(payload);
+      setRemoteIngredients((prev) => [created, ...(prev ?? [])]);
+      setRemoteTotalCount((prev) => prev + 1);
+      setRemoteCategories((prev) =>
+        prev.includes(created.category) ? prev : [...prev, created.category].sort((a, b) => a.localeCompare(b))
+      );
+      setSearch(created.name);
+      setFilterCategory("");
+      setSelectedIngredient(created);
+      setShowCreateIngredient(false);
+    } finally {
+      setIsCreatingIngredient(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -219,6 +248,17 @@ export default function IngredientsPage() {
           <span>{sourceLabel}</span>
         </div>
       </div>
+
+      {supabaseEnabled && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setShowCreateIngredient(true)}
+            className="px-3 py-2 rounded-lg border border-accent/30 bg-accent/5 text-accent text-sm font-medium hover:bg-accent/10 transition-colors"
+          >
+            + Create Ingredient
+          </button>
+        </div>
+      )}
 
       {/* Search + Filter bar */}
       <div className="flex items-center gap-3">
@@ -390,6 +430,18 @@ export default function IngredientsPage() {
           onClose={() => setSelectedIngredient(null)}
         />
       )}
+
+      {showCreateIngredient && (
+        <CreateIngredientModal
+          title="Create Ingredient"
+          initialName={search}
+          initialCategory={filterCategory}
+          categoryOptions={categoryOptions}
+          submitting={isCreatingIngredient}
+          onClose={() => setShowCreateIngredient(false)}
+          onCreate={handleCreateIngredient}
+        />
+      )}
     </div>
   );
 }
@@ -442,6 +494,7 @@ function IngredientRow({
   const cCal = clamp(carbs) * 4;
   const fCal = clamp(fat) * 9;
   const total = pCal + cCal + fCal || 1;
+  const sourceLabel = SOURCE_LABELS[ingredient.source ?? "usda_survey"] ?? "USDA";
 
   return (
     <button
@@ -463,7 +516,7 @@ function IngredientRow({
         </div>
       </div>
       <span className="text-[10px] font-medium text-muted/70 bg-black/[0.03] px-2 py-0.5 rounded shrink-0 ml-3">
-        USDA
+        {sourceLabel}
       </span>
     </button>
   );
