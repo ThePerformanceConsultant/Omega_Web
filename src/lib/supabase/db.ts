@@ -883,15 +883,7 @@ export async function fetchFormSubmissions() {
       clientName: assignment?.profiles?.full_name ?? "Unknown Client",
       submittedAt: row.submitted_at ?? new Date().toISOString(),
       reviewed: row.reviewed ?? false,
-      answers: (row.form_answers ?? []).map((a: any) => ({
-        id: a.id,
-        questionId: a.question_id,
-        answerText: a.answer_text ?? "",
-        selectedChoiceIds: a.selected_choice_ids ?? null,
-        numericValue: a.numeric_value != null ? Number(a.numeric_value) : null,
-        boolValue: a.bool_value ?? null,
-        metricsValues: a.metrics_values ?? null,
-      })),
+      answers: (row.form_answers ?? []).map(normalizeFormAnswer),
     };
   });
 }
@@ -914,14 +906,39 @@ function normalizeFormQuestion(row: any): FormQuestion {
 }
 
 function normalizeFormAnswer(row: any): FormAnswer {
+  let metricsValues: Record<string, string> | null = null;
+  if (row.metrics_values && typeof row.metrics_values === "object") {
+    metricsValues = row.metrics_values as Record<string, string>;
+  } else if (typeof row.metrics_values === "string") {
+    try {
+      const parsed = JSON.parse(row.metrics_values);
+      if (parsed && typeof parsed === "object") {
+        metricsValues = parsed as Record<string, string>;
+      }
+    } catch {
+      metricsValues = null;
+    }
+  }
+
+  const selectedChoiceIds = Array.isArray(row.selected_choice_ids)
+    ? row.selected_choice_ids
+      .map((value: unknown) => Number(value))
+      .filter((value: number) => Number.isFinite(value))
+    : null;
+
+  const answerText = row.answer_text
+    ?? row.answer
+    ?? row.value
+    ?? "";
+
   return {
     id: row.id,
     questionId: row.question_id,
-    answerText: row.answer_text ?? "",
-    selectedChoiceIds: row.selected_choice_ids ?? null,
+    answerText: typeof answerText === "string" ? answerText : String(answerText),
+    selectedChoiceIds,
     numericValue: row.numeric_value != null ? Number(row.numeric_value) : null,
     boolValue: row.bool_value ?? null,
-    metricsValues: row.metrics_values ?? null,
+    metricsValues,
   };
 }
 
@@ -960,7 +977,6 @@ export async function fetchClientCheckInPanelData(clientId: string): Promise<{
       template_id,
       due_date,
       status,
-      created_at,
       form_templates!inner(
         id,
         name,
@@ -976,7 +992,7 @@ export async function fetchClientCheckInPanelData(clientId: string): Promise<{
     `)
     .eq("client_id", clientId)
     .order("due_date", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false });
+    .order("id", { ascending: false });
   if (error) throw error;
 
   const now = new Date();
@@ -1011,7 +1027,7 @@ export async function fetchClientCheckInPanelData(clientId: string): Promise<{
       templateName,
       formType,
       dueDate: row.due_date ?? null,
-      assignedAt: row.created_at ?? new Date().toISOString(),
+      assignedAt: row.due_date ?? latestResponse?.submitted_at ?? new Date().toISOString(),
       status: getCheckInStatus({
         assignmentStatus: row.status ?? null,
         dueDate: row.due_date ?? null,
@@ -1447,6 +1463,27 @@ export async function createCoachNote(coachId: string, clientId: string, content
   }).select().single();
   if (error) throw error;
   return data;
+}
+
+export async function updateCoachNote(noteId: string, content: string) {
+  const client = getClient();
+  const { data, error } = await client
+    .from("coach_notes")
+    .update({ content })
+    .eq("id", Number(noteId))
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteCoachNote(noteId: string) {
+  const client = getClient();
+  const { error } = await client
+    .from("coach_notes")
+    .delete()
+    .eq("id", Number(noteId));
+  if (error) throw error;
 }
 
 // ── Roadmap ─────────────────────────────────────────────

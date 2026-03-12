@@ -10,6 +10,8 @@ import {
   deleteClientTask,
   fetchCoachNotes,
   createCoachNote,
+  updateCoachNote,
+  deleteCoachNote,
 } from "./supabase/db";
 import { createClient } from "./supabase/client";
 
@@ -215,6 +217,45 @@ export const clientStore = {
       emitChange();
     } catch (err) {
       console.error("[clientStore] addNote failed:", err);
+    }
+  },
+
+  async updateNote(noteId: string, content: string) {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+
+    const original = notes.find((n) => n.id === noteId);
+    if (!original) return;
+
+    notes = notes.map((n) => (n.id === noteId ? { ...n, content: trimmed } : n));
+    emitChange();
+
+    try {
+      const saved = await updateCoachNote(noteId, trimmed);
+      notes = notes.map((n) => (n.id === noteId ? fromDbNote(saved) : n));
+      emitChange();
+    } catch (err) {
+      notes = notes.map((n) => (n.id === noteId ? original : n));
+      emitChange();
+      console.error("[clientStore] updateNote failed:", err);
+    }
+  },
+
+  async removeNote(noteId: string) {
+    const removed = notes.find((n) => n.id === noteId);
+    if (!removed) return;
+
+    notes = notes.filter((n) => n.id !== noteId);
+    emitChange();
+
+    try {
+      await deleteCoachNote(noteId);
+    } catch (err) {
+      notes = [...notes, removed].sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+      emitChange();
+      console.error("[clientStore] removeNote failed:", err);
     }
   },
 

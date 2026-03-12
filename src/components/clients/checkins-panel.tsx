@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, CircleDot, Plus, Star } from "lucide-react";
+import { AlertCircle, Check, CheckCircle2, CircleDot, Pencil, Plus, Star, Trash2, X } from "lucide-react";
 import {
   ClientCheckInHistoryItem,
   ClientCheckInTemplate,
@@ -129,6 +129,8 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("all");
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingNoteDraft, setEditingNoteDraft] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -184,11 +186,44 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
     return map;
   }, [selectedEntry]);
 
+  const answersByOrder = useMemo(() => selectedEntry?.answers ?? [], [selectedEntry]);
+
+  function getAnswerForQuestion(question: FormQuestion, index: number): FormAnswer | undefined {
+    const byId = answersByQuestionId.get(question.id);
+    if (byId) return byId;
+    return answersByOrder[index];
+  }
+
   function handleAddNote() {
     const text = noteDraft.trim();
     if (!text) return;
     clientStore.addNote(clientId, text);
     setNoteDraft("");
+  }
+
+  function handleStartEdit(noteId: string, content: string) {
+    setEditingNoteId(noteId);
+    setEditingNoteDraft(content);
+  }
+
+  function handleCancelEdit() {
+    setEditingNoteId(null);
+    setEditingNoteDraft("");
+  }
+
+  async function handleSaveEdit() {
+    if (!editingNoteId) return;
+    const text = editingNoteDraft.trim();
+    if (!text) return;
+    await clientStore.updateNote(editingNoteId, text);
+    handleCancelEdit();
+  }
+
+  async function handleDeleteNote(noteId: string) {
+    await clientStore.removeNote(noteId);
+    if (editingNoteId === noteId) {
+      handleCancelEdit();
+    }
   }
 
   return (
@@ -282,7 +317,7 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
                         <span className="inline-flex mt-1 px-1.5 py-0.5 rounded bg-black/5 text-[10px] text-muted">
                           {FORM_QUESTION_TYPE_META[question.questionType].label}
                         </span>
-                        <div className="mt-2">{renderAnswer(answersByQuestionId.get(question.id), question)}</div>
+                        <div className="mt-2">{renderAnswer(getAnswerForQuestion(question, index), question)}</div>
                       </div>
                     </div>
                   </div>
@@ -315,8 +350,58 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
           {notes.length === 0 && <p className="text-xs text-muted py-1">No notes yet.</p>}
           {notes.map((note) => (
             <div key={note.id} className="rounded-lg bg-black/[0.03] px-3 py-2">
-              <p className="text-sm whitespace-pre-wrap">{note.content}</p>
-              <p className="text-[10px] text-muted mt-1">{new Date(note.createdAt).toLocaleString("en-GB")}</p>
+              {editingNoteId === note.id ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={editingNoteDraft}
+                    onChange={(e) => setEditingNoteDraft(e.target.value)}
+                    rows={2}
+                    className="w-full px-2.5 py-2 rounded-lg bg-white border border-black/10 text-sm resize-none"
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={handleCancelEdit}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-black/10 text-xs hover:bg-black/[0.03]"
+                    >
+                      <X size={12} />
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveEdit}
+                      disabled={!editingNoteDraft.trim()}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-accent text-white text-xs hover:bg-accent-light disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Check size={12} />
+                      Save
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm whitespace-pre-wrap">{note.content}</p>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => handleStartEdit(note.id, note.content)}
+                        className="w-7 h-7 rounded-md border border-black/10 text-muted hover:text-foreground hover:bg-black/[0.03] flex items-center justify-center"
+                        aria-label="Edit note"
+                        title="Edit note"
+                      >
+                        <Pencil size={12} />
+                      </button>
+                      <button
+                        onClick={() => void handleDeleteNote(note.id)}
+                        className="w-7 h-7 rounded-md border border-black/10 text-danger hover:bg-danger/10 flex items-center justify-center"
+                        aria-label="Delete note"
+                        title="Delete note"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted mt-1">{new Date(note.createdAt).toLocaleString("en-GB")}</p>
+                </>
+              )}
             </div>
           ))}
         </div>

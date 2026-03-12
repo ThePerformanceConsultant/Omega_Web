@@ -31,8 +31,10 @@ export default function SubmissionDetailModal({ submission, template, onClose, o
     }
   }
 
-  function renderAnswer(question: FormQuestion) {
-    const answer = submission.answers.find((a) => a.questionId === question.id);
+  function renderAnswer(question: FormQuestion, index: number) {
+    const answer =
+      submission.answers.find((a) => a.questionId === question.id)
+      ?? submission.answers[index];
     if (!answer) return <span className="text-muted text-sm italic">No answer</span>;
 
     switch (question.questionType) {
@@ -158,7 +160,7 @@ export default function SubmissionDetailModal({ submission, template, onClose, o
                   </span>
                 </div>
               </div>
-              <div className="ml-6">{renderAnswer(q)}</div>
+              <div className="ml-6">{renderAnswer(q, i)}</div>
             </div>
           ))}
           {questions.length === 0 && (
