@@ -39,6 +39,25 @@ type IngredientCatalogRow = {
   portions: Array<{ label?: string; gramWeight?: number }> | null;
 };
 
+const CATEGORY_NORMALIZATION: Record<string, string> = {
+  "bean, pea, legume dishes": "Beans, Peas, Legumes",
+  "beans, peas, legumes": "Beans, Peas, Legumes",
+};
+
+function isCategoryCodeLike(value: string): boolean {
+  // Ignore short taxonomy/code-like labels such as "BC", "BJP", "CA".
+  return /^[A-Z0-9]{1,4}$/.test(value.trim());
+}
+
+function normalizeIngredientCategory(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const compact = value.trim().replace(/\s+/g, " ");
+  if (!compact) return null;
+  if (isCategoryCodeLike(compact)) return null;
+  const normalized = CATEGORY_NORMALIZATION[compact.toLowerCase()];
+  return normalized ?? compact;
+}
+
 export type CreateIngredientCatalogInput = {
   name: string;
   category?: string | null;
@@ -128,7 +147,7 @@ function toIngredientCatalogItem(row: IngredientCatalogRow): USDAIngredient {
   return {
     fdcId: Number(row.fdc_id),
     name: row.name ?? "",
-    category: row.category ?? "Uncategorized",
+    category: normalizeIngredientCategory(row.category) ?? "Uncategorized",
     source: row.data_type === "coach_custom" ? "coach_custom" : row.source,
     nutrients,
     portions,
@@ -147,7 +166,14 @@ export async function fetchIngredientCatalogCategories(): Promise<string[]> {
 
   if (error) throw error;
 
-  return [...new Set((data ?? []).map((row: any) => row.category).filter(Boolean))];
+  const unique = new Map<string, string>();
+  for (const row of data ?? []) {
+    const normalized = normalizeIngredientCategory(row?.category);
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (!unique.has(key)) unique.set(key, normalized);
+  }
+  return [...unique.values()].sort((a, b) => a.localeCompare(b));
 }
 
 export async function fetchIngredientCatalogCount(category?: string): Promise<number> {
