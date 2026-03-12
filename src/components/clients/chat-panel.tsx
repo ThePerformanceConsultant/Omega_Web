@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Send, MessageCircle } from "lucide-react";
 import { useConversations, useMessages, messageStore } from "@/lib/message-store";
 import { createClient } from "@/lib/supabase/client";
+import { EmojiPicker } from "@/components/ui/emoji-picker";
 
 function formatMessageTime(iso: string): string {
   return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
@@ -96,6 +97,11 @@ export function ChatPanel({ clientId }: { clientId: string }) {
     setDraft("");
   }
 
+  function handleEmojiInsert(emoji: string) {
+    setDraft((prev) => `${prev}${emoji}`);
+    textareaRef.current?.focus();
+  }
+
   return (
     <div className="flex flex-col h-full -mx-4 -mb-4">
       {/* Messages */}
@@ -141,6 +147,7 @@ export function ChatPanel({ clientId }: { clientId: string }) {
       {/* Input — always visible even when no conversation exists */}
       <div className="px-5 py-3 border-t border-black/10 bg-white/50 shrink-0">
         <div className="flex items-end gap-3">
+          <EmojiPicker onSelect={handleEmojiInsert} disabled={creating} />
           <textarea
             ref={textareaRef}
             placeholder="Type a message..."

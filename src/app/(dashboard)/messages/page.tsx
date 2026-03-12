@@ -6,6 +6,7 @@ import { useConversations, useMessages, messageStore } from "@/lib/message-store
 import { Conversation } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
 import { fetchClients } from "@/lib/supabase/db";
+import { EmojiPicker } from "@/components/ui/emoji-picker";
 
 // ── Helpers ──
 
@@ -147,6 +148,10 @@ export default function MessagesPage() {
     setBroadcastDraft("");
     setBroadcastSelected(new Set());
     setShowBroadcast(false);
+  }
+
+  function handleBroadcastEmojiInsert(emoji: string) {
+    setBroadcastDraft((prev) => `${prev}${emoji}`);
   }
 
   return (
@@ -309,13 +314,16 @@ export default function MessagesPage() {
 
             {/* Compose + send */}
             <div className="px-5 py-4 border-t border-black/10">
-              <textarea
-                placeholder="Type your broadcast message..."
-                value={broadcastDraft}
-                onChange={(e) => setBroadcastDraft(e.target.value)}
-                rows={3}
-                className="w-full px-4 py-2.5 rounded-xl bg-black/5 border border-black/10 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/25 resize-none"
-              />
+              <div className="flex items-start gap-2">
+                <EmojiPicker onSelect={handleBroadcastEmojiInsert} />
+                <textarea
+                  placeholder="Type your broadcast message..."
+                  value={broadcastDraft}
+                  onChange={(e) => setBroadcastDraft(e.target.value)}
+                  rows={3}
+                  className="w-full px-4 py-2.5 rounded-xl bg-black/5 border border-black/10 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/25 resize-none"
+                />
+              </div>
               <button
                 onClick={handleBroadcast}
                 disabled={!broadcastDraft.trim() || broadcastSelected.size === 0 || broadcastSending}
@@ -392,6 +400,11 @@ function ChatWindow({ conversationId, coachId }: { conversationId: string; coach
     }
   }
 
+  function handleEmojiInsert(emoji: string) {
+    setDraft((prev) => `${prev}${emoji}`);
+    textareaRef.current?.focus();
+  }
+
   // Precompute which messages start a new date group
   const dateSepSet = useMemo(() => {
     const set = new Set<string>();
@@ -460,6 +473,7 @@ function ChatWindow({ conversationId, coachId }: { conversationId: string; coach
       {/* Input bar */}
       <div className="px-6 py-3 border-t border-black/10 bg-white/50 shrink-0">
         <div className="flex items-end gap-3">
+          <EmojiPicker onSelect={handleEmojiInsert} />
           <textarea
             ref={textareaRef}
             placeholder="Type a message..."
