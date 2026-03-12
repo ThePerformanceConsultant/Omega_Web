@@ -55,7 +55,7 @@ export function EmojiPicker({ onSelect, disabled = false }: EmojiPickerProps) {
       </button>
 
       {open && (
-        <div className="absolute bottom-11 left-0 z-50 w-48 rounded-xl border border-black/10 bg-white shadow-lg p-2">
+        <div className="absolute bottom-11 left-0 z-50 w-64 rounded-xl border border-black/10 bg-white shadow-lg p-2">
           <div className="grid grid-cols-8 gap-1">
             {COMMON_EMOJIS.map((emoji) => (
               <button
@@ -65,7 +65,7 @@ export function EmojiPicker({ onSelect, disabled = false }: EmojiPickerProps) {
                   onSelect(emoji);
                   setOpen(false);
                 }}
-                className="h-8 w-8 rounded-lg hover:bg-black/5 transition-colors text-base"
+                className="aspect-square rounded-lg hover:bg-black/5 transition-colors text-base"
                 title={emoji}
               >
                 {emoji}
