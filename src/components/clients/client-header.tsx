@@ -1,12 +1,13 @@
 "use client";
 
-import { ArrowLeft, MessageCircle, CheckSquare, StickyNote, Info } from "lucide-react";
+import { ArrowLeft, MessageCircle, CheckSquare, StickyNote, Info, ClipboardList } from "lucide-react";
 import { Client, ClientPanelType } from "@/lib/types";
 import { Avatar } from "@/components/ui/avatar";
 
 const PANELS: { key: ClientPanelType; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
   { key: "chat", label: "Chat", icon: MessageCircle },
   { key: "tasks", label: "Tasks", icon: CheckSquare },
+  { key: "checkins", label: "Check-ins", icon: ClipboardList },
   { key: "notes", label: "Notes", icon: StickyNote },
   { key: "info", label: "Info", icon: Info },
 ];

@@ -9,6 +9,7 @@ import { SubTabBar } from "./sub-tab-bar";
 import { SidePanel } from "./side-panel";
 import { ChatPanel } from "./chat-panel";
 import { TasksPanel } from "./tasks-panel";
+import { CheckinsPanel } from "./checkins-panel";
 import { NotesPanel } from "./notes-panel";
 import { InfoPanel } from "./info-panel";
 import { OverviewTab } from "./tabs/overview-tab";
@@ -20,6 +21,7 @@ import { RoadmapTab } from "./tabs/roadmap";
 const PANEL_TITLES: Record<string, string> = {
   chat: "Chat",
   tasks: "Tasks",
+  checkins: "Check-ins",
   notes: "Notes",
   info: "Info",
 };
@@ -95,6 +97,7 @@ export function ClientProfile({
           >
             {activePanel === "chat" && <ChatPanel clientId={client.id} />}
             {activePanel === "tasks" && <TasksPanel clientId={client.id} />}
+            {activePanel === "checkins" && <CheckinsPanel clientId={client.id} />}
             {activePanel === "notes" && <NotesPanel clientId={client.id} />}
             {activePanel === "info" && <InfoPanel clientId={client.id} />}
           </SidePanel>

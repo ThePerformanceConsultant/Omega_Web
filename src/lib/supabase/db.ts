@@ -289,6 +289,12 @@ import type {
   NotificationPrefs,
   UserSettings,
   AccountProfile,
+  FormAnswer,
+  FormQuestion,
+  FormType,
+  ClientCheckInTemplate,
+  ClientCheckInHistoryItem,
+  CheckInHistoryStatus,
 } from "../types";
 
 /** Optional function that resolves a recipe by ID (from the in-memory recipe store). */
@@ -890,6 +896,147 @@ export async function fetchFormSubmissions() {
   });
 }
 
+function normalizeFormQuestion(row: any): FormQuestion {
+  return {
+    id: row.id,
+    questionText: row.question_text ?? "",
+    questionType: row.question_type ?? "short_text",
+    sortOrder: row.sort_order ?? 0,
+    isRequired: row.is_required ?? false,
+    choices: row.choices ?? null,
+    allowsMultipleSelection: row.allows_multiple_selection ?? false,
+    metricsConfig: row.metrics_config ?? null,
+    sliderMin: row.slider_min != null ? Number(row.slider_min) : null,
+    sliderMax: row.slider_max != null ? Number(row.slider_max) : null,
+    sliderStep: row.slider_step != null ? Number(row.slider_step) : null,
+    placeholder: row.placeholder ?? null,
+  };
+}
+
+function normalizeFormAnswer(row: any): FormAnswer {
+  return {
+    id: row.id,
+    questionId: row.question_id,
+    answerText: row.answer_text ?? "",
+    selectedChoiceIds: row.selected_choice_ids ?? null,
+    numericValue: row.numeric_value != null ? Number(row.numeric_value) : null,
+    boolValue: row.bool_value ?? null,
+    metricsValues: row.metrics_values ?? null,
+  };
+}
+
+function getCheckInStatus(input: {
+  assignmentStatus: string | null;
+  dueDate: string | null;
+  hasSubmission: boolean;
+  now: Date;
+}): CheckInHistoryStatus {
+  if (input.hasSubmission) return "completed";
+
+  const status = (input.assignmentStatus ?? "").toLowerCase();
+  if (status === "completed" || status === "submitted") return "completed";
+  if (status === "missed" || status === "overdue") return "missed";
+
+  if (!input.dueDate) return "pending";
+  const due = new Date(input.dueDate);
+  if (Number.isNaN(due.getTime())) return "pending";
+
+  // Date-only due dates become due by end-of-day.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate)) {
+    due.setHours(23, 59, 59, 999);
+  }
+  return due < input.now ? "missed" : "pending";
+}
+
+export async function fetchClientCheckInPanelData(clientId: string): Promise<{
+  templates: ClientCheckInTemplate[];
+  history: ClientCheckInHistoryItem[];
+}> {
+  const client = getClient();
+  const { data, error } = await client
+    .from("form_assignments")
+    .select(`
+      id,
+      template_id,
+      due_date,
+      status,
+      created_at,
+      form_templates!inner(
+        id,
+        name,
+        form_type,
+        form_questions(*)
+      ),
+      form_responses(
+        id,
+        submitted_at,
+        reviewed,
+        form_answers(*)
+      )
+    `)
+    .eq("client_id", clientId)
+    .order("due_date", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+
+  const now = new Date();
+  const templatesById = new Map<number, ClientCheckInTemplate>();
+  const history: ClientCheckInHistoryItem[] = (data ?? []).map((row: any) => {
+    const template = row.form_templates;
+    const templateId = Number(template?.id ?? row.template_id ?? 0);
+    const templateName = template?.name ?? "Untitled Form";
+    const formType = (template?.form_type ?? "check_in") as FormType;
+    const questions = (template?.form_questions ?? [])
+      .map(normalizeFormQuestion)
+      .sort((a: FormQuestion, b: FormQuestion) => a.sortOrder - b.sortOrder);
+
+    if (!templatesById.has(templateId)) {
+      templatesById.set(templateId, {
+        id: templateId,
+        name: templateName,
+        formType,
+        questions,
+      });
+    }
+
+    const latestResponse = [...(row.form_responses ?? [])]
+      .sort((a: any, b: any) =>
+        new Date(b.submitted_at ?? 0).getTime() - new Date(a.submitted_at ?? 0).getTime()
+      )[0];
+
+    const answers = (latestResponse?.form_answers ?? []).map(normalizeFormAnswer);
+    return {
+      assignmentId: String(row.id),
+      templateId,
+      templateName,
+      formType,
+      dueDate: row.due_date ?? null,
+      assignedAt: row.created_at ?? new Date().toISOString(),
+      status: getCheckInStatus({
+        assignmentStatus: row.status ?? null,
+        dueDate: row.due_date ?? null,
+        hasSubmission: !!latestResponse,
+        now,
+      }),
+      responseId: latestResponse?.id ?? null,
+      submittedAt: latestResponse?.submitted_at ?? null,
+      reviewed: latestResponse?.reviewed ?? false,
+      answers,
+    };
+  });
+
+  history.sort((a, b) => {
+    const aDate = new Date(a.submittedAt ?? a.dueDate ?? a.assignedAt).getTime();
+    const bDate = new Date(b.submittedAt ?? b.dueDate ?? b.assignedAt).getTime();
+    return bDate - aDate;
+  });
+
+  return {
+    templates: Array.from(templatesById.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    history,
+  };
+}
+
 export async function markSubmissionReviewed(responseId: number) {
   const client = getClient();
   const { error } = await client
@@ -1173,30 +1320,43 @@ export async function createConversation(coachId: string, clientId: string) {
 export async function sendMessage(msg: { conversationId: string; senderId: string; content: string }) {
   const client = getClient();
   const now = new Date().toISOString();
+  const conversationId = Number(msg.conversationId);
+  if (!Number.isFinite(conversationId) || conversationId <= 0) {
+    throw new Error("Invalid conversation id.");
+  }
+
   const { data, error } = await client.from("messages").insert({
     conversation_id: Number(msg.conversationId),
     sender_id: msg.senderId,
     content: msg.content,
     sent_at: now,
-    read: true,
+    read: false,
   }).select().single();
   if (error) throw error;
 
-  // Fetch current client_unread to increment
-  const { data: convRow } = await client
+  // Fetch current unread counters + coach id to increment the recipient's unread count.
+  const { data: convRow, error: convError } = await client
     .from("conversations")
-    .select("client_unread")
-    .eq("id", Number(msg.conversationId))
+    .select("coach_id,coach_unread,client_unread")
+    .eq("id", conversationId)
     .single();
-  const currentUnread = (convRow?.client_unread as number) ?? 0;
+  if (convError) throw convError;
+
+  const senderIsCoach = String(convRow?.coach_id ?? "") === msg.senderId;
+  const currentCoachUnread = Number(convRow?.coach_unread ?? 0);
+  const currentClientUnread = Number(convRow?.client_unread ?? 0);
+  const nextCoachUnread = senderIsCoach ? currentCoachUnread : currentCoachUnread + 1;
+  const nextClientUnread = senderIsCoach ? currentClientUnread + 1 : currentClientUnread;
 
   // Update conversation metadata + unread + last sender
-  await client.from("conversations").update({
+  const { error: updateError } = await client.from("conversations").update({
     last_message_preview: msg.content,
     last_message_at: now,
     last_sender_id: msg.senderId,
-    client_unread: currentUnread + 1,
-  }).eq("id", Number(msg.conversationId));
+    coach_unread: nextCoachUnread,
+    client_unread: nextClientUnread,
+  }).eq("id", conversationId);
+  if (updateError) throw updateError;
 
   return data;
 }

@@ -373,6 +373,29 @@ export interface FormAnswer {
   metricsValues: Record<string, string> | null;
 }
 
+export type CheckInHistoryStatus = "completed" | "missed" | "pending";
+
+export interface ClientCheckInTemplate {
+  id: number;
+  name: string;
+  formType: FormType;
+  questions: FormQuestion[];
+}
+
+export interface ClientCheckInHistoryItem {
+  assignmentId: string;
+  templateId: number;
+  templateName: string;
+  formType: FormType;
+  dueDate: string | null;
+  assignedAt: string;
+  status: CheckInHistoryStatus;
+  responseId: number | null;
+  submittedAt: string | null;
+  reviewed: boolean;
+  answers: FormAnswer[];
+}
+
 // ==========================================
 // Messaging Types
 // ==========================================
@@ -450,7 +473,7 @@ export interface AccountProfile {
 // Client Dashboard Types
 // ==========================================
 
-export type ClientPanelType = "chat" | "tasks" | "notes" | "info" | null;
+export type ClientPanelType = "chat" | "tasks" | "checkins" | "notes" | "info" | null;
 
 export interface Task {
   id: string;
