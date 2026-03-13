@@ -158,21 +158,32 @@ export async function fetchIngredientCatalogCategories(): Promise<string[]> {
   if (!isSupabaseConfigured()) return [];
   const client = getClient();
 
-  const { data, error } = await client
-    .from("ingredient_catalog")
-    .select("category")
-    .not("category", "is", null)
-    .order("category");
-
-  if (error) throw error;
-
   const unique = new Map<string, string>();
-  for (const row of data ?? []) {
-    const normalized = normalizeIngredientCategory(row?.category);
-    if (!normalized) continue;
-    const key = normalized.toLowerCase();
-    if (!unique.has(key)) unique.set(key, normalized);
+  const pageSize = 1000;
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await client
+      .from("ingredient_catalog")
+      .select("category")
+      .not("category", "is", null)
+      .order("category")
+      .range(offset, offset + pageSize - 1);
+
+    if (error) throw error;
+
+    const rows = data ?? [];
+    for (const row of rows) {
+      const normalized = normalizeIngredientCategory(row?.category);
+      if (!normalized) continue;
+      const key = normalized.toLowerCase();
+      if (!unique.has(key)) unique.set(key, normalized);
+    }
+
+    if (rows.length < pageSize) break;
+    offset += pageSize;
   }
+
   return [...unique.values()].sort((a, b) => a.localeCompare(b));
 }
 
