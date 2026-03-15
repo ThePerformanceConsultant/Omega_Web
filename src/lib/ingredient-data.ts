@@ -21,7 +21,7 @@ export interface USDAIngredient {
   fdcId: number;
   name: string;
   category: string;
-  source?: "usda_survey" | "mccance_widdowson" | "open_food_facts" | "coach_custom";
+  source?: "usda_survey" | "mccance_widdowson" | "open_food_facts" | "fatsecret_uk" | "coach_custom";
   /** Nutrient values per 100 g */
   nutrients: Record<string, number>;
   /** Available portion sizes (first is always "100 g") */
