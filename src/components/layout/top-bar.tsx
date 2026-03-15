@@ -77,9 +77,55 @@ function notificationHeadline(item: NotificationItem): string {
 }
 
 function notificationTarget(item: NotificationItem): string {
+  const payload = item.payload ?? {};
+  const clientId =
+    typeof payload.client_id === "string"
+      ? payload.client_id
+      : typeof payload.client_id === "number"
+      ? String(payload.client_id)
+      : null;
+  const conversationId =
+    typeof payload.conversation_id === "string"
+      ? payload.conversation_id
+      : typeof payload.conversation_id === "number"
+      ? String(payload.conversation_id)
+      : null;
+
   switch (item.kind) {
-    case "message_received":
-      return "/messages";
+    case "message_received": {
+      const params = new URLSearchParams();
+      if (conversationId) params.set("conversationId", conversationId);
+      if (clientId) params.set("clientId", clientId);
+      const query = params.toString();
+      return query ? `/messages?${query}` : "/messages";
+    }
+    case "form_submitted":
+    case "checkin_submitted": {
+      if (!clientId) return "/forms";
+      const params = new URLSearchParams({
+        clientId,
+        panel: "checkins",
+      });
+      const templateId =
+        typeof payload.template_id === "number"
+          ? String(payload.template_id)
+          : typeof payload.template_id === "string"
+          ? payload.template_id
+          : null;
+      const responseId =
+        typeof payload.response_id === "number"
+          ? String(payload.response_id)
+          : typeof payload.response_id === "string"
+          ? payload.response_id
+          : null;
+      if (templateId) params.set("templateId", templateId);
+      if (responseId) params.set("responseId", responseId);
+      return `/clients?${params.toString()}`;
+    }
+    case "task_completed":
+      return clientId ? `/clients?clientId=${encodeURIComponent(clientId)}&panel=tasks` : "/clients";
+    case "workout_completed":
+      return clientId ? `/clients?clientId=${encodeURIComponent(clientId)}&tab=progress` : "/clients";
     case "insight_published":
       return "/vault";
     default:

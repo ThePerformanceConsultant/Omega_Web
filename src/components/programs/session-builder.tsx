@@ -10,6 +10,7 @@ import {
   MoreHorizontal,
   List as ListIcon,
   Trash2,
+  Link as LinkIcon,
 } from "lucide-react";
 import {
   ProgramWithPhases,
@@ -58,6 +59,7 @@ export function SessionBuilder({
   const [dragLibraryExercise, setDragLibraryExercise] = useState<Exercise | null>(null);
   const [dragSectionIdx, setDragSectionIdx] = useState<number | null>(null);
   const [dropTargetSection, setDropTargetSection] = useState<number | null>(null);
+  const [whiteboardVideoDrafts, setWhiteboardVideoDrafts] = useState<Record<string, string>>({});
   const [dropExerciseTarget, setDropExerciseTarget] = useState<{
     sectionIdx: number;
     insertIndex: number;
@@ -71,6 +73,57 @@ export function SessionBuilder({
 
   const phase = program.phases[phaseIdx];
   const workout = phase?.workouts[workoutIdx];
+
+  const normalizeVideoUrl = (raw: string): string => {
+    const trimmed = raw.trim();
+    if (!trimmed) return "";
+    const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    try {
+      const parsed = new URL(withProtocol);
+      const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+      if (host === "youtu.be") {
+        const id = parsed.pathname.split("/").filter(Boolean)[0];
+        if (id) return `https://www.youtube.com/watch?v=${id}`;
+      }
+      if (host.endsWith("youtube.com")) {
+        const shorts = parsed.pathname.match(/^\/shorts\/([^/?#]+)/i)?.[1];
+        if (shorts) return `https://www.youtube.com/watch?v=${shorts}`;
+        const embed = parsed.pathname.match(/^\/embed\/([^/?#]+)/i)?.[1];
+        if (embed) return `https://www.youtube.com/watch?v=${embed}`;
+        const v = parsed.searchParams.get("v");
+        if (v) return `https://www.youtube.com/watch?v=${v}`;
+      }
+      return parsed.toString();
+    } catch {
+      return withProtocol;
+    }
+  };
+
+  const extractYouTubeId = (url: string): string | null => {
+    if (!url) return null;
+    try {
+      const parsed = new URL(normalizeVideoUrl(url));
+      const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+      if (host === "youtu.be") {
+        return parsed.pathname.split("/").filter(Boolean)[0] ?? null;
+      }
+      if (host.endsWith("youtube.com")) {
+        const shorts = parsed.pathname.match(/^\/shorts\/([^/?#]+)/i)?.[1];
+        if (shorts) return shorts;
+        const embed = parsed.pathname.match(/^\/embed\/([^/?#]+)/i)?.[1];
+        if (embed) return embed;
+        return parsed.searchParams.get("v");
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const videoThumbUrl = (url: string): string | null => {
+    const youtubeId = extractYouTubeId(url);
+    return youtubeId ? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg` : null;
+  };
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
@@ -159,6 +212,41 @@ export function SessionBuilder({
     });
   };
 
+  const getWhiteboardVideoUrls = (exercise: WorkoutExerciseWithSets): string[] => {
+    return Array.isArray(exercise.whiteboard_video_urls)
+      ? exercise.whiteboard_video_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
+      : [];
+  };
+
+  const setWhiteboardVideoUrls = (exerciseIndex: number, urls: string[]) => {
+    updateWorkout((wk) => {
+      wk.exercises[exerciseIndex].whiteboard_video_urls = urls;
+    });
+  };
+
+  const addWhiteboardVideo = (exerciseIndex: number) => {
+    const exercise = workout?.exercises[exerciseIndex];
+    if (!exercise) return;
+    const draftKey = String(exercise.id);
+    const draftUrl = whiteboardVideoDrafts[draftKey] ?? "";
+    const normalized = normalizeVideoUrl(draftUrl);
+    if (!normalized) return;
+    const current = getWhiteboardVideoUrls(exercise);
+    if (current.includes(normalized)) {
+      setWhiteboardVideoDrafts((prev) => ({ ...prev, [draftKey]: "" }));
+      return;
+    }
+    setWhiteboardVideoUrls(exerciseIndex, [...current, normalized]);
+    setWhiteboardVideoDrafts((prev) => ({ ...prev, [draftKey]: "" }));
+  };
+
+  const removeWhiteboardVideo = (exerciseIndex: number, urlToRemove: string) => {
+    const exercise = workout?.exercises[exerciseIndex];
+    if (!exercise) return;
+    const next = getWhiteboardVideoUrls(exercise).filter((url) => url !== urlToRemove);
+    setWhiteboardVideoUrls(exerciseIndex, next);
+  };
+
   const addExercise = (ex: Exercise) => {
     const defaultSection = workout?.workout_sections.length ? 0 : -1;
     const insertAt = workout?.exercises.length ?? 0;
@@ -184,6 +272,7 @@ export function SessionBuilder({
         expanded: false,
         tracking_type: "Free Text" as SetType,
         alternate_exercise_ids: [],
+        whiteboard_video_urls: [],
         section_index: sectionIndex,
         set_data: [],
       });
@@ -201,6 +290,9 @@ export function SessionBuilder({
     updateWorkout((wk) => {
       const ex = wk.exercises[idx];
       ex.tracking_type = newType;
+      if (newType !== "Free Text") {
+        ex.whiteboard_video_urls = [];
+      }
       const cols = SET_TYPE_OPTIONS[newType].columns;
       for (const s of ex.set_data) {
         for (const col of cols) {
@@ -550,16 +642,134 @@ export function SessionBuilder({
               )}
             </div>
             {editing ? (
-              <textarea
-                className="w-full px-3 py-2 rounded-lg bg-black/5 border border-black/10 text-sm outline-none focus:border-accent/50 resize-y min-h-[80px]"
-                placeholder="Enter workout instructions (e.g. 5 Rounds for Time: 10 Power Cleans, 15 Box Jumps...)"
-                rows={4}
-                value={ex.notes || ""}
-                onChange={(e) => updateExField(origIdx, "notes", e.target.value)}
-              />
+              <div className="space-y-3">
+                <textarea
+                  className="w-full px-3 py-2 rounded-lg bg-black/5 border border-black/10 text-sm outline-none focus:border-accent/50 resize-y min-h-[80px]"
+                  placeholder="Enter workout instructions (e.g. 5 Rounds for Time: 10 Power Cleans, 15 Box Jumps...)"
+                  rows={4}
+                  value={ex.notes || ""}
+                  onChange={(e) => updateExField(origIdx, "notes", e.target.value)}
+                />
+                <div className="rounded-lg border border-black/10 bg-black/[0.02] p-2.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">
+                    Associated Videos
+                  </p>
+                  <div className="flex gap-2 mb-2">
+                    <input
+                      className="flex-1 px-2.5 py-2 rounded-lg bg-white border border-black/10 text-xs outline-none focus:border-accent/50"
+                      placeholder="Paste YouTube or video URL..."
+                      value={whiteboardVideoDrafts[String(ex.id)] ?? ""}
+                      onChange={(event) =>
+                        setWhiteboardVideoDrafts((prev) => ({
+                          ...prev,
+                          [String(ex.id)]: event.target.value,
+                        }))
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          addWhiteboardVideo(origIdx);
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => addWhiteboardVideo(origIdx)}
+                      className="px-2.5 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent/90 transition-colors"
+                    >
+                      Add
+                    </button>
+                  </div>
+                  {getWhiteboardVideoUrls(ex).length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {getWhiteboardVideoUrls(ex).map((videoUrl) => {
+                        const thumb = videoThumbUrl(videoUrl);
+                        return (
+                          <div
+                            key={videoUrl}
+                            className="rounded-lg border border-black/10 bg-white overflow-hidden"
+                          >
+                            <a
+                              href={videoUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="block"
+                              title="Open video in new tab"
+                            >
+                              {thumb ? (
+                                <img
+                                  src={thumb}
+                                  alt="Video thumbnail"
+                                  className="w-full h-20 object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-20 flex items-center justify-center bg-black/[0.04] text-muted text-xs">
+                                  No preview
+                                </div>
+                              )}
+                            </a>
+                            <div className="flex items-center gap-2 px-2 py-1.5">
+                              <a
+                                href={videoUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[11px] text-accent hover:underline truncate flex-1 inline-flex items-center gap-1"
+                                title={videoUrl}
+                              >
+                                <LinkIcon size={12} />
+                                Video link
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => removeWhiteboardVideo(origIdx, videoUrl)}
+                                className="p-1 rounded text-red-600 hover:bg-red-50 transition-colors"
+                                title="Remove video"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted italic">No videos added yet.</p>
+                  )}
+                </div>
+              </div>
             ) : (
-              <div className="text-sm whitespace-pre-wrap bg-black/[0.02] rounded-lg px-3 py-2">
-                {ex.notes || <span className="text-muted italic">No instructions</span>}
+              <div className="space-y-2">
+                <div className="text-sm whitespace-pre-wrap bg-black/[0.02] rounded-lg px-3 py-2">
+                  {ex.notes || <span className="text-muted italic">No instructions</span>}
+                </div>
+                {getWhiteboardVideoUrls(ex).length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {getWhiteboardVideoUrls(ex).map((videoUrl) => {
+                      const thumb = videoThumbUrl(videoUrl);
+                      return (
+                        <a
+                          key={videoUrl}
+                          href={videoUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-lg border border-black/10 bg-black/[0.02] overflow-hidden hover:border-accent/40 transition-colors"
+                        >
+                          {thumb ? (
+                            <img src={thumb} alt="Video thumbnail" className="w-full h-20 object-cover" />
+                          ) : (
+                            <div className="w-full h-20 flex items-center justify-center text-muted text-xs">
+                              Video
+                            </div>
+                          )}
+                          <div className="px-2 py-1.5 text-xs text-accent inline-flex items-center gap-1">
+                            <LinkIcon size={12} />
+                            Open video
+                          </div>
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>

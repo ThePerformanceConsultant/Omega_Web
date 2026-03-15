@@ -589,6 +589,7 @@ export interface WorkoutExerciseWithSets extends WorkoutExercise {
   set_data: SetData[];
   tracking_type: SetType;
   alternate_exercise_ids: number[];
+  whiteboard_video_urls?: string[];
 }
 
 export interface PhaseWorkoutWithSections extends PhaseWorkout {

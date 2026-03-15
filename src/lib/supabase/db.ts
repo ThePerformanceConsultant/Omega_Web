@@ -30,7 +30,7 @@ export async function getCoachId(): Promise<string | null> {
 }
 
 type IngredientCatalogRow = {
-  source: "usda_survey" | "mccance_widdowson" | "open_food_facts";
+  source: "usda_survey" | "mccance_widdowson" | "open_food_facts" | "fatsecret_uk";
   fdc_id: number;
   name: string;
   category: string | null;
@@ -118,6 +118,7 @@ function ingredientMatchScore(
   else if (nutrientKeys >= 3) score += 4;
 
   if (row.source === "open_food_facts") score += 6;
+  if (row.source === "fatsecret_uk") score += 5;
   if (row.source === "mccance_widdowson") score += 3;
   return score;
 }
@@ -1848,6 +1849,38 @@ import type {
   ProgramWithPhases,
 } from "../types";
 
+const WHITEBOARD_VIDEO_META_PREFIX = "__omega_whiteboard_videos__:";
+
+function parseWhiteboardVideoUrls(raw: unknown): string[] {
+  if (typeof raw !== "string") return [];
+  const text = raw.trim();
+  if (!text.startsWith(WHITEBOARD_VIDEO_META_PREFIX)) return [];
+  const encoded = text.slice(WHITEBOARD_VIDEO_META_PREFIX.length).trim();
+  if (!encoded) return [];
+  try {
+    const parsed = JSON.parse(encoded);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function serializeWhiteboardVideoUrls(urls: unknown): string | null {
+  if (!Array.isArray(urls)) return null;
+  const clean = Array.from(
+    new Set(
+      urls
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter(Boolean)
+    )
+  );
+  if (clean.length === 0) return null;
+  return `${WHITEBOARD_VIDEO_META_PREFIX}${JSON.stringify(clean)}`;
+}
+
 function fromDbProgram(row: any): ProgramWithPhases {
   const phases: ProgramPhaseWithWorkouts[] = (row.program_phases ?? [])
     .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
@@ -1867,46 +1900,54 @@ function fromDbProgram(row: any): ProgramWithPhases {
 
           const exercises: WorkoutExerciseWithSets[] = (w.workout_exercises ?? [])
             .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
-            .map((ex: any) => ({
-              id: ex.id,
-              workout_id: ex.workout_id,
-              section_id: ex.section_id ?? null,
-              exercise_id: ex.exercise_id ?? null,
-              name: ex.name ?? "",
-              muscle_group: ex.muscle_group ?? null,
-              sets: ex.sets ?? 0,
-              weight: Number(ex.weight ?? 0),
-              min_reps: ex.min_reps ?? 0,
-              max_reps: ex.max_reps ?? 0,
-              rest_seconds: ex.rest_seconds ?? 90,
-              pct_1rm: Number(ex.pct_1rm ?? 0),
-              rpe: Number(ex.rpe ?? 0),
-              calories: Number(ex.calories ?? 0),
-              duration: ex.duration ?? "",
-              distance: ex.distance ?? "",
-              notes: ex.notes ?? null,
-              sort_order: ex.sort_order ?? 0,
-              expanded: false,
-              section_index: ex.section_index ?? 0,
-              tracking_type: ex.tracking_type ?? "Weight/Reps/RPE",
-              alternate_exercise_ids: [],
-              set_data: (ex.workout_exercise_sets ?? [])
-                .sort((a: any, b: any) => (a.set_number ?? 0) - (b.set_number ?? 0))
-                .map((s: any): SetData => ({
-                  id: s.id,
-                  set_number: s.set_number ?? 0,
-                  weight: Number(s.weight ?? 0),
-                  min_reps: s.min_reps ?? 0,
-                  max_reps: s.max_reps ?? 0,
-                  rest_seconds: s.rest_seconds ?? 90,
-                  pct_1rm: Number(s.pct_1rm ?? 0),
-                  rpe: Number(s.rpe ?? 0),
-                  calories: Number(s.calories ?? 0),
-                  duration: s.duration ?? "",
-                  distance: s.distance ?? "",
-                  done: false,
-                })),
-            }));
+            .map((ex: any) => {
+              const trackingType = ex.tracking_type ?? "Weight/Reps/RPE";
+              const whiteboardVideoUrls =
+                trackingType === "Free Text"
+                  ? parseWhiteboardVideoUrls(ex.duration)
+                  : [];
+              return {
+                id: ex.id,
+                workout_id: ex.workout_id,
+                section_id: ex.section_id ?? null,
+                exercise_id: ex.exercise_id ?? null,
+                name: ex.name ?? "",
+                muscle_group: ex.muscle_group ?? null,
+                sets: ex.sets ?? 0,
+                weight: Number(ex.weight ?? 0),
+                min_reps: ex.min_reps ?? 0,
+                max_reps: ex.max_reps ?? 0,
+                rest_seconds: ex.rest_seconds ?? 90,
+                pct_1rm: Number(ex.pct_1rm ?? 0),
+                rpe: Number(ex.rpe ?? 0),
+                calories: Number(ex.calories ?? 0),
+                duration: trackingType === "Free Text" ? "" : (ex.duration ?? ""),
+                distance: ex.distance ?? "",
+                notes: ex.notes ?? null,
+                sort_order: ex.sort_order ?? 0,
+                expanded: false,
+                section_index: ex.section_index ?? 0,
+                tracking_type: trackingType,
+                alternate_exercise_ids: [],
+                whiteboard_video_urls: whiteboardVideoUrls,
+                set_data: (ex.workout_exercise_sets ?? [])
+                  .sort((a: any, b: any) => (a.set_number ?? 0) - (b.set_number ?? 0))
+                  .map((s: any): SetData => ({
+                    id: s.id,
+                    set_number: s.set_number ?? 0,
+                    weight: Number(s.weight ?? 0),
+                    min_reps: s.min_reps ?? 0,
+                    max_reps: s.max_reps ?? 0,
+                    rest_seconds: s.rest_seconds ?? 90,
+                    pct_1rm: Number(s.pct_1rm ?? 0),
+                    rpe: Number(s.rpe ?? 0),
+                    calories: Number(s.calories ?? 0),
+                    duration: s.duration ?? "",
+                    distance: s.distance ?? "",
+                    done: false,
+                  })),
+              };
+            });
 
           return {
             id: w.id,
@@ -2082,6 +2123,10 @@ export async function saveProgram(program: ProgramWithPhases, coachId: string, o
       for (let ei = 0; ei < workout.exercises.length; ei++) {
         const ex = workout.exercises[ei];
         const resolvedSectionId = ex.section_id ? (sectionIdMap[ex.section_id] ?? null) : null;
+        const durationValue =
+          ex.tracking_type === "Free Text"
+            ? serializeWhiteboardVideoUrls((ex as { whiteboard_video_urls?: string[] }).whiteboard_video_urls)
+            : ((ex as any).duration || null);
         const { data: savedEx, error: exErr } = await client
           .from("workout_exercises")
           .insert({
@@ -2098,7 +2143,7 @@ export async function saveProgram(program: ProgramWithPhases, coachId: string, o
             pct_1rm: (ex as any).pct_1rm ?? null,
             rpe: (ex as any).rpe ?? null,
             calories: (ex as any).calories ?? null,
-            duration: (ex as any).duration || null,
+            duration: durationValue,
             distance: (ex as any).distance || null,
             notes: ex.notes,
             sort_order: ei,

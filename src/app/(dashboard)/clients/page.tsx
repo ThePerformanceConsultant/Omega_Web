@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Plus, Search, ChevronRight, Copy, Check, Link2, X } from "lucide-react";
-import { Client, ClientSubTab } from "@/lib/types";
+import { Client, ClientPanelType, ClientSubTab } from "@/lib/types";
 import { Avatar } from "@/components/ui/avatar";
 import { ClientProfile } from "@/components/clients/client-profile";
 import { fetchClients, getCoachInviteCode } from "@/lib/supabase/db";
@@ -34,6 +34,7 @@ function ClientsPageInner() {
   const [search, setSearch] = useState("");
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [initialTab, setInitialTab] = useState<ClientSubTab | undefined>(undefined);
+  const [initialPanel, setInitialPanel] = useState<ClientPanelType>(null);
 
   // Invite code
   const [inviteCode, setInviteCode] = useState<string | null>(null);
@@ -59,6 +60,7 @@ function ClientsPageInner() {
   // Auto-select client from URL params after clients load
   const pendingClientId = searchParams.get("clientId");
   const pendingTab = searchParams.get("tab") as ClientSubTab | null;
+  const pendingPanel = searchParams.get("panel");
   useEffect(() => {
     if (!pendingClientId || selectedClient) return;
     const match = clients.find((c) => c.id === pendingClientId);
@@ -66,10 +68,13 @@ function ClientsPageInner() {
       queueMicrotask(() => {
         setSelectedClient(match);
         if (pendingTab) setInitialTab(pendingTab);
+        if (pendingPanel === "chat" || pendingPanel === "tasks" || pendingPanel === "checkins" || pendingPanel === "notes" || pendingPanel === "info") {
+          setInitialPanel(pendingPanel);
+        }
         window.history.replaceState({}, "", "/clients");
       });
     }
-  }, [clients, pendingClientId, pendingTab, selectedClient]);
+  }, [clients, pendingClientId, pendingPanel, pendingTab, selectedClient]);
 
   const filtered = useMemo(() => {
     if (!search) return clients;
@@ -137,8 +142,13 @@ function ClientsPageInner() {
     return (
       <ClientProfile
         client={selectedClient}
-        onBack={() => { setSelectedClient(null); setInitialTab(undefined); }}
+        onBack={() => {
+          setSelectedClient(null);
+          setInitialTab(undefined);
+          setInitialPanel(null);
+        }}
         initialTab={initialTab}
+        initialPanel={initialPanel}
       />
     );
   }

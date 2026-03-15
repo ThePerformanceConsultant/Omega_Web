@@ -30,12 +30,14 @@ export function ClientProfile({
   client,
   onBack,
   initialTab,
+  initialPanel,
 }: {
   client: Client;
   onBack: () => void;
   initialTab?: ClientSubTab;
+  initialPanel?: ClientPanelType;
 }) {
-  const [activePanel, setActivePanel] = useState<ClientPanelType>(null);
+  const [activePanel, setActivePanel] = useState<ClientPanelType>(initialPanel ?? null);
   const [activeSubTab, setActiveSubTab] = useState<ClientSubTab>(initialTab ?? "overview");
 
   // Hydrate tasks & notes for this client

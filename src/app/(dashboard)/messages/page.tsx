@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { Suspense, useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { Search, Send, MessageCircle, Plus, Megaphone, X, Check } from "lucide-react";
 import { useConversations, useMessages, messageStore } from "@/lib/message-store";
 import { Conversation } from "@/lib/types";
@@ -56,6 +57,15 @@ function Avatar({ initials, size = 36 }: { initials: string; size?: number }) {
 // ── Main Page ──
 
 export default function MessagesPage() {
+  return (
+    <Suspense>
+      <MessagesPageInner />
+    </Suspense>
+  );
+}
+
+function MessagesPageInner() {
+  const searchParams = useSearchParams();
   const conversations = useConversations();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -66,6 +76,8 @@ export default function MessagesPage() {
   const [broadcastSelected, setBroadcastSelected] = useState<Set<string>>(new Set());
   const [broadcastDraft, setBroadcastDraft] = useState("");
   const [broadcastSending, setBroadcastSending] = useState(false);
+  const pendingConversationId = searchParams.get("conversationId");
+  const pendingClientId = searchParams.get("clientId");
 
   // Hydrate from Supabase on mount
   useEffect(() => {
@@ -98,6 +110,23 @@ export default function MessagesPage() {
     }
     return list;
   }, [conversations, search]);
+
+  useEffect(() => {
+    if (!pendingConversationId && !pendingClientId) return;
+    const match = conversations.find((conversation) => {
+      if (pendingConversationId) return conversation.id === pendingConversationId;
+      if (pendingClientId) return conversation.clientId === pendingClientId;
+      return false;
+    });
+    if (!match) return;
+    queueMicrotask(() => {
+      setSelectedId(match.id);
+      if (match.unreadCount > 0) {
+        messageStore.markAsRead(match.id);
+      }
+      window.history.replaceState({}, "", "/messages");
+    });
+  }, [conversations, pendingClientId, pendingConversationId]);
 
   // Clients who don't have a conversation yet
   const availableClients = useMemo(() => {
@@ -143,7 +172,7 @@ export default function MessagesPage() {
     const text = broadcastDraft.trim();
     if (!text || broadcastSelected.size === 0 || !coachId) return;
     setBroadcastSending(true);
-    const sent = await messageStore.broadcastMessage(coachId, [...broadcastSelected], text);
+    await messageStore.broadcastMessage(coachId, [...broadcastSelected], text);
     setBroadcastSending(false);
     setBroadcastDraft("");
     setBroadcastSelected(new Set());
@@ -256,7 +285,7 @@ export default function MessagesPage() {
 
       {/* Right: Chat window */}
       {selectedId ? (
-        <ChatWindow conversationId={selectedId} coachId={coachId} />
+        <ChatWindow key={selectedId} conversationId={selectedId} coachId={coachId} />
       ) : (
         <div className="flex-1 flex flex-col items-center justify-center text-muted">
           <MessageCircle size={48} className="mb-3 opacity-30" />
@@ -367,11 +396,10 @@ function ChatWindow({ conversationId, coachId }: { conversationId: string; coach
     }
   }, [messages.length, conversationId]);
 
-  // Focus input and reset draft when conversation changes
+  // Focus input on mount / conversation switch
   useEffect(() => {
     textareaRef.current?.focus();
-    setDraft("");
-  }, [conversationId]);
+  }, []);
 
   // Auto-resize textarea
   const autoResize = useCallback(() => {
