@@ -62,6 +62,39 @@ const SUPPLEMENT_FREQUENCY_LABELS: Record<SupplementTemplateFrequency, string> =
   as_prescribed: "As prescribed",
 };
 
+function getSupplementErrorMessage(error: unknown, action: "load" | "save" | "delete"): string {
+  const fallback = action === "load"
+    ? "Unable to load supplements right now."
+    : action === "save"
+      ? "Unable to save supplement right now."
+      : "Unable to delete supplement right now.";
+
+  const code = typeof error === "object" && error && "code" in error
+    ? String((error as { code?: unknown }).code ?? "")
+    : "";
+  const message = typeof error === "object" && error && "message" in error
+    ? String((error as { message?: unknown }).message ?? "")
+    : "";
+
+  if (message.includes("No authenticated coach session")) {
+    return "Session expired. Refresh the page and sign in again.";
+  }
+
+  if (
+    code === "PGRST205" ||
+    code === "42P01" ||
+    /supplement_templates|client_supplement_prescriptions|supplement_adherence_logs|nutrition_daily_notes/i.test(message)
+  ) {
+    return "Supplements backend tables are not available yet. Run Supabase migration 00036 and refresh.";
+  }
+
+  if (code === "42501") {
+    return "Permission denied by Supabase policy. Verify supplement table RLS policies for your coach account.";
+  }
+
+  return `${fallback} Please try again.`;
+}
+
 function toSupplementDraft(template: SupplementTemplate | null): SupplementDraft {
   if (!template) return EMPTY_SUPPLEMENT_DRAFT;
   return {
@@ -89,6 +122,7 @@ export default function NutritionPage() {
   const [coachId, setCoachId] = useState<string | null>(null);
   const [supplements, setSupplements] = useState<SupplementTemplate[]>([]);
   const [loadingSupplements, setLoadingSupplements] = useState(true);
+  const [supplementError, setSupplementError] = useState<string | null>(null);
   const [showSupplementEditor, setShowSupplementEditor] = useState(false);
   const [editingSupplement, setEditingSupplement] = useState<SupplementTemplate | null>(null);
 
@@ -114,8 +148,12 @@ export default function NutritionPage() {
         const rows = await fetchSupplementTemplates(resolvedCoachId);
         if (cancelled) return;
         setSupplements(sortSupplements(rows));
+        setSupplementError(null);
       } catch (error) {
         console.error("[NutritionPage] supplement hydrate failed:", error);
+        if (!cancelled) {
+          setSupplementError(getSupplementErrorMessage(error, "load"));
+        }
       } finally {
         if (!cancelled) setLoadingSupplements(false);
       }
@@ -171,11 +209,14 @@ export default function NutritionPage() {
           : [...prev, saved];
         return sortSupplements(next);
       });
+      setSupplementError(null);
       setEditingSupplement(null);
       setShowSupplementEditor(false);
     } catch (error) {
       console.error("[NutritionPage] save supplement failed:", error);
-      alert("Unable to save supplement right now. Please try again.");
+      const message = getSupplementErrorMessage(error, "save");
+      setSupplementError(message);
+      alert(message);
     }
   }
 
@@ -183,9 +224,12 @@ export default function NutritionPage() {
     try {
       await deleteSupplementTemplate(id);
       setSupplements((prev) => prev.filter((s) => s.id !== id));
+      setSupplementError(null);
     } catch (error) {
       console.error("[NutritionPage] delete supplement failed:", error);
-      alert("Unable to delete supplement right now. Please try again.");
+      const message = getSupplementErrorMessage(error, "delete");
+      setSupplementError(message);
+      alert(message);
     }
   }
 
@@ -316,6 +360,12 @@ export default function NutritionPage() {
 
       {mainTab === "supplements" && (
         <>
+          {supplementError && (
+            <div className="rounded-xl border border-red-300/70 bg-red-50 px-4 py-3 text-xs text-red-700">
+              {supplementError}
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted">
               {supplements.length} supplement{supplements.length !== 1 ? "s" : ""}
