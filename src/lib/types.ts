@@ -910,6 +910,74 @@ export interface MealPlanTemplate {
   updatedAt: string;
 }
 
+export const SUPPLEMENT_TEMPLATE_FREQUENCIES = [
+  "daily",
+  "bi_daily",
+  "every_other_day",
+  "as_prescribed",
+] as const;
+
+export type SupplementTemplateFrequency = (typeof SUPPLEMENT_TEMPLATE_FREQUENCIES)[number];
+
+export const SUPPLEMENT_PRESCRIPTION_FREQUENCIES = [
+  "daily",
+  "bi_daily",
+  "every_other_day",
+  "as_prescribed",
+  "pre_workout",
+  "any",
+] as const;
+
+export type SupplementPrescriptionFrequency = (typeof SUPPLEMENT_PRESCRIPTION_FREQUENCIES)[number];
+
+export interface SupplementTemplate {
+  id: string;
+  coachId: string;
+  name: string;
+  dosageFrequency: SupplementTemplateFrequency;
+  timing: string;
+  purchaseUrl: string;
+  notes: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ClientSupplementPrescription {
+  id: string;
+  clientId: string;
+  supplementTemplateId: string;
+  supplementName: string;
+  dosage: string;
+  dosageFrequency: SupplementPrescriptionFrequency;
+  timing: string;
+  purchaseUrl: string;
+  notes: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupplementAdherenceLog {
+  id: string;
+  clientId: string;
+  clientSupplementPrescriptionId: string;
+  date: string;
+  taken: boolean;
+  takenAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NutritionDailyNote {
+  id: string;
+  clientId: string;
+  date: string;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ==========================================
 // Food Log Entry Types
 // ==========================================

@@ -32,8 +32,16 @@ import type {
   FoodLogViewMode,
   ComplianceLevel,
   MealPlanTemplate,
+  ClientSupplementPrescription,
+  SupplementAdherenceLog,
+  NutritionDailyNote,
 } from "@/lib/types";
-import { fetchFoodLogEntries } from "@/lib/supabase/db";
+import {
+  fetchFoodLogEntries,
+  fetchClientSupplementPrescriptions,
+  fetchSupplementAdherenceLogs,
+  fetchNutritionDailyNotes,
+} from "@/lib/supabase/db";
 import { MicronutrientCollapsible } from "@/components/nutrition/micronutrient-collapsible";
 
 // ── Compliance Helpers ──────────────────────────────────────
@@ -99,6 +107,9 @@ export function FoodLogViewer({
   const [viewMode, setViewMode] = useState<FoodLogViewMode>("day");
   const [currentDate, setCurrentDate] = useState(new Date());
   const [entries, setEntries] = useState<FoodLogEntry[]>([]);
+  const [clientSupplements, setClientSupplements] = useState<ClientSupplementPrescription[]>([]);
+  const [adherenceLogs, setAdherenceLogs] = useState<SupplementAdherenceLog[]>([]);
+  const [dailyNotes, setDailyNotes] = useState<NutritionDailyNote[]>([]);
   const [loading, setLoading] = useState(true);
 
   const targets = useMemo(() => computePlanTargets(plan), [plan]);
@@ -121,15 +132,41 @@ export function FoodLogViewer({
     };
   }, [viewMode, currentDate]);
 
-  // Fetch entries
+  useEffect(() => {
+    let cancelled = false;
+    fetchClientSupplementPrescriptions(clientId)
+      .then((rows) => {
+        if (!cancelled) setClientSupplements(rows.filter((row) => row.isActive));
+      })
+      .catch((error) => {
+        console.error("[FoodLogViewer] supplement prescription fetch error:", error);
+        if (!cancelled) setClientSupplements([]);
+      });
+    return () => { cancelled = true; };
+  }, [clientId]);
+
+  // Fetch entries + supplement adherence + nutrition notes for the current range
   useEffect(() => {
     let cancelled = false;
     setLoading(true); // eslint-disable-line react-hooks/set-state-in-effect -- intentional loading state before async fetch
-    fetchFoodLogEntries(clientId, startDate, endDate)
-      .then((data) => { if (!cancelled) setEntries(data); })
+    Promise.all([
+      fetchFoodLogEntries(clientId, startDate, endDate),
+      fetchSupplementAdherenceLogs(clientId, startDate, endDate),
+      fetchNutritionDailyNotes(clientId, startDate, endDate),
+    ])
+      .then(([foodRows, adherenceRows, noteRows]) => {
+        if (cancelled) return;
+        setEntries(foodRows);
+        setAdherenceLogs(adherenceRows);
+        setDailyNotes(noteRows);
+      })
       .catch((err) => {
         console.error("[FoodLogViewer] fetch error:", err);
-        if (!cancelled) setEntries([]);
+        if (!cancelled) {
+          setEntries([]);
+          setAdherenceLogs([]);
+          setDailyNotes([]);
+        }
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -198,6 +235,40 @@ export function FoodLogViewer({
     }
     return groups;
   }, [entries]);
+
+  const selectedDateKey = useMemo(
+    () => format(currentDate, "yyyy-MM-dd"),
+    [currentDate]
+  );
+
+  const adherenceByPrescriptionId = useMemo(() => {
+    const map = new Map<string, SupplementAdherenceLog>();
+    if (viewMode !== "day") return map;
+    for (const log of adherenceLogs) {
+      if (log.date === selectedDateKey) {
+        map.set(log.clientSupplementPrescriptionId, log);
+      }
+    }
+    return map;
+  }, [adherenceLogs, selectedDateKey, viewMode]);
+
+  const selectedDayNote = useMemo(() => {
+    if (viewMode !== "day") return null;
+    return dailyNotes.find((row) => row.date === selectedDateKey)?.note ?? null;
+  }, [dailyNotes, selectedDateKey, viewMode]);
+
+  const nonEmptyNotes = useMemo(
+    () => dailyNotes.filter((row) => row.note.trim().length > 0),
+    [dailyNotes]
+  );
+
+  const adherenceSummary = useMemo(() => {
+    if (viewMode === "day") return null;
+    const total = adherenceLogs.length;
+    const taken = adherenceLogs.filter((row) => row.taken).length;
+    const pct = total > 0 ? Math.round((taken / total) * 100) : 0;
+    return { total, taken, pct };
+  }, [adherenceLogs, viewMode]);
 
   // Weekly/monthly averages
   const averages = useMemo(() => {
@@ -343,6 +414,16 @@ export function FoodLogViewer({
         </div>
       )}
 
+      {!loading && entries.length === 0 && viewMode === "day" && (
+        <>
+          <SupplementAdherenceCard
+            prescriptions={clientSupplements}
+            adherenceByPrescriptionId={adherenceByPrescriptionId}
+          />
+          <NutritionDailyNoteCard note={selectedDayNote} />
+        </>
+      )}
+
       {/* Content */}
       {!loading && entries.length > 0 && (
         <>
@@ -372,6 +453,13 @@ export function FoodLogViewer({
                   entries={slotEntries}
                 />
               ))}
+
+              <SupplementAdherenceCard
+                prescriptions={clientSupplements}
+                adherenceByPrescriptionId={adherenceByPrescriptionId}
+              />
+
+              <NutritionDailyNoteCard note={selectedDayNote} />
 
               {/* Micronutrients */}
               {Object.keys(microTotals).length > 0 && (
@@ -441,6 +529,16 @@ export function FoodLogViewer({
                   </div>
                 </div>
               )}
+
+              {adherenceSummary && (
+                <SupplementAdherenceSummaryCard
+                  total={adherenceSummary.total}
+                  taken={adherenceSummary.taken}
+                  pct={adherenceSummary.pct}
+                />
+              )}
+
+              <NutritionNotesSummaryCard notes={nonEmptyNotes} />
 
               {/* Micronutrients (averaged) */}
               {Object.keys(microTotals).length > 0 && averages && (
@@ -732,6 +830,118 @@ function MealSlotLogCard({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function SupplementAdherenceCard({
+  prescriptions,
+  adherenceByPrescriptionId,
+}: {
+  prescriptions: ClientSupplementPrescription[];
+  adherenceByPrescriptionId: Map<string, SupplementAdherenceLog>;
+}) {
+  return (
+    <div className="glass-card p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-xs font-semibold text-foreground">Supplement Adherence</span>
+      </div>
+      {prescriptions.length === 0 ? (
+        <p className="text-[11px] text-muted">No supplements assigned.</p>
+      ) : (
+        <div className="space-y-2">
+          {prescriptions.map((prescription) => {
+            const log = adherenceByPrescriptionId.get(prescription.id);
+            const taken = log?.taken ?? false;
+            return (
+              <div
+                key={prescription.id}
+                className="rounded-lg border border-black/10 bg-black/[0.02] px-3 py-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-foreground truncate">
+                    {prescription.supplementName}
+                  </p>
+                  <span
+                    className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
+                      taken ? "bg-green-500/15 text-green-600" : "bg-black/10 text-muted"
+                    }`}
+                  >
+                    {taken ? "Taken" : "Pending"}
+                  </span>
+                </div>
+                <div className="mt-1 text-[10px] text-muted flex items-center gap-2 flex-wrap">
+                  <span>{prescription.dosageFrequency.replaceAll("_", " ")}</span>
+                  {prescription.dosage && <span>· {prescription.dosage}</span>}
+                  {prescription.timing && <span>· {prescription.timing}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NutritionDailyNoteCard({ note }: { note: string | null }) {
+  return (
+    <div className="glass-card p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs font-semibold text-foreground">Client Daily Note</span>
+      </div>
+      {note && note.trim().length > 0 ? (
+        <p className="text-xs text-foreground whitespace-pre-wrap">{note}</p>
+      ) : (
+        <p className="text-[11px] text-muted">No note added for this day.</p>
+      )}
+    </div>
+  );
+}
+
+function SupplementAdherenceSummaryCard({
+  total,
+  taken,
+  pct,
+}: {
+  total: number;
+  taken: number;
+  pct: number;
+}) {
+  return (
+    <div className="glass-card p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs font-semibold text-foreground">Supplement Adherence Summary</span>
+      </div>
+      {total === 0 ? (
+        <p className="text-[11px] text-muted">No supplement check-ins in this range.</p>
+      ) : (
+        <p className="text-xs text-foreground">
+          {taken}/{total} logged as taken ({pct}%)
+        </p>
+      )}
+    </div>
+  );
+}
+
+function NutritionNotesSummaryCard({ notes }: { notes: NutritionDailyNote[] }) {
+  return (
+    <div className="glass-card p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs font-semibold text-foreground">Client Nutrition Notes</span>
+      </div>
+      {notes.length === 0 ? (
+        <p className="text-[11px] text-muted">No notes in this range.</p>
+      ) : (
+        <div className="space-y-2">
+          {notes.slice(0, 7).map((row) => (
+            <div key={row.id} className="rounded-lg border border-black/10 bg-black/[0.02] px-3 py-2">
+              <p className="text-[10px] font-medium text-muted">{row.date}</p>
+              <p className="text-xs text-foreground whitespace-pre-wrap">{row.note}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

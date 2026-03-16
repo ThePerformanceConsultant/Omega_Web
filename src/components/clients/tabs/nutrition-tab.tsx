@@ -13,16 +13,35 @@ import {
   FilePlus,
   ChefHat,
   Apple,
+  Pill,
+  Clock3,
+  ExternalLink,
 } from "lucide-react";
-import type { MealPlanTemplate, PlanMeal, MealOption, MealSlotConfig } from "@/lib/types";
+import { SUPPLEMENT_PRESCRIPTION_FREQUENCIES } from "@/lib/types";
+import type {
+  MealPlanTemplate,
+  PlanMeal,
+  MealOption,
+  MealSlotConfig,
+  ClientExtendedInfo,
+  SupplementTemplate,
+  ClientSupplementPrescription,
+  SupplementPrescriptionFrequency,
+} from "@/lib/types";
 import {
   useMealPlans,
   mealPlanStore,
   createEmptyTemplate,
   deepCopyForClient,
 } from "@/lib/meal-plan-store";
-import { fetchClientExtendedInfo, fetchNutritionOnboardingData } from "@/lib/supabase/db";
-import type { ClientExtendedInfo } from "@/lib/types";
+import {
+  fetchClientExtendedInfo,
+  fetchNutritionOnboardingData,
+  fetchSupplementTemplates,
+  fetchClientSupplementPrescriptions,
+  saveClientSupplementPrescription,
+  deleteClientSupplementPrescription,
+} from "@/lib/supabase/db";
 import type { NutritionOnboardingData } from "@/lib/nutrition-questionnaire-data";
 import { recipeStore } from "@/lib/recipe-store";
 import { getIngredientByFdcId } from "@/lib/nutrition-utils";
@@ -31,6 +50,72 @@ import { MealPlanDrawer } from "@/components/nutrition/meal-plan-drawer";
 import { TemplateSelectorModal } from "@/components/nutrition/template-selector-modal";
 import { MicronutrientCollapsible } from "@/components/nutrition/micronutrient-collapsible";
 import { FoodLogViewer } from "./food-log-viewer";
+
+type InnerNutritionTab = "meal-plan" | "food-log" | "supplements";
+
+type SupplementPrescriptionDraft = {
+  id?: string;
+  supplementTemplateId: string;
+  supplementName: string;
+  dosage: string;
+  dosageFrequency: SupplementPrescriptionFrequency;
+  timing: string;
+  purchaseUrl: string;
+  notes: string;
+  isActive: boolean;
+};
+
+const SUPPLEMENT_PRESCRIPTION_FREQUENCY_LABELS: Record<SupplementPrescriptionFrequency, string> = {
+  daily: "Daily",
+  bi_daily: "Bi-daily",
+  every_other_day: "Every other day",
+  as_prescribed: "As prescribed",
+  pre_workout: "Pre-workout",
+  any: "Any",
+};
+
+function sortSupplementTemplates(rows: SupplementTemplate[]): SupplementTemplate[] {
+  return [...rows].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function sortClientSupplementPrescriptions(
+  rows: ClientSupplementPrescription[]
+): ClientSupplementPrescription[] {
+  return [...rows].sort((a, b) => a.supplementName.localeCompare(b.supplementName));
+}
+
+function templateToPrescriptionDraft(template: SupplementTemplate): SupplementPrescriptionDraft {
+  const frequency: SupplementPrescriptionFrequency =
+    template.dosageFrequency === "as_prescribed"
+      ? "as_prescribed"
+      : template.dosageFrequency;
+  return {
+    supplementTemplateId: template.id,
+    supplementName: template.name,
+    dosage: "",
+    dosageFrequency: frequency,
+    timing: template.timing,
+    purchaseUrl: template.purchaseUrl,
+    notes: template.notes,
+    isActive: template.isActive,
+  };
+}
+
+function prescriptionToDraft(
+  prescription: ClientSupplementPrescription
+): SupplementPrescriptionDraft {
+  return {
+    id: prescription.id,
+    supplementTemplateId: prescription.supplementTemplateId,
+    supplementName: prescription.supplementName,
+    dosage: prescription.dosage,
+    dosageFrequency: prescription.dosageFrequency,
+    timing: prescription.timing,
+    purchaseUrl: prescription.purchaseUrl,
+    notes: prescription.notes,
+    isActive: prescription.isActive,
+  };
+}
 
 export function NutritionTab({ clientId }: { clientId: string }) {
   const router = useRouter();
@@ -57,7 +142,12 @@ export function NutritionTab({ clientId }: { clientId: string }) {
   );
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [showActions, setShowActions] = useState(false);
-  const [innerTab, setInnerTab] = useState<"meal-plan" | "food-log">("meal-plan");
+  const [innerTab, setInnerTab] = useState<InnerNutritionTab>("meal-plan");
+  const [supplementTemplates, setSupplementTemplates] = useState<SupplementTemplate[]>([]);
+  const [clientSupplements, setClientSupplements] = useState<ClientSupplementPrescription[]>([]);
+  const [loadingSupplements, setLoadingSupplements] = useState(true);
+  const [showSupplementEditor, setShowSupplementEditor] = useState(false);
+  const [editingSupplement, setEditingSupplement] = useState<ClientSupplementPrescription | null>(null);
 
   // ── Actions ───────────────────────────────────────────────────────────
 
@@ -117,6 +207,67 @@ export function NutritionTab({ clientId }: { clientId: string }) {
     setEditingPlan(null);
   }
 
+  useEffect(() => {
+    let cancelled = false;
+    async function hydrateSupplements() {
+      setLoadingSupplements(true);
+      try {
+        const [templatesRows, prescriptionsRows] = await Promise.all([
+          fetchSupplementTemplates(),
+          fetchClientSupplementPrescriptions(clientId),
+        ]);
+        if (cancelled) return;
+        setSupplementTemplates(sortSupplementTemplates(templatesRows));
+        setClientSupplements(sortClientSupplementPrescriptions(prescriptionsRows));
+      } catch (error) {
+        console.error("[NutritionTab] supplement hydrate failed:", error);
+      } finally {
+        if (!cancelled) setLoadingSupplements(false);
+      }
+    }
+    hydrateSupplements();
+    return () => { cancelled = true; };
+  }, [clientId]);
+
+  async function handleSaveClientSupplement(draft: SupplementPrescriptionDraft) {
+    try {
+      const saved = await saveClientSupplementPrescription({
+        id: draft.id,
+        clientId,
+        supplementTemplateId: draft.supplementTemplateId,
+        supplementName: draft.supplementName,
+        dosage: draft.dosage,
+        dosageFrequency: draft.dosageFrequency,
+        timing: draft.timing,
+        purchaseUrl: draft.purchaseUrl,
+        notes: draft.notes,
+        isActive: draft.isActive,
+      });
+      setClientSupplements((prev) => {
+        const existing = prev.some((row) => row.id === saved.id);
+        const next = existing
+          ? prev.map((row) => (row.id === saved.id ? saved : row))
+          : [...prev, saved];
+        return sortClientSupplementPrescriptions(next);
+      });
+      setShowSupplementEditor(false);
+      setEditingSupplement(null);
+    } catch (error) {
+      console.error("[NutritionTab] save client supplement failed:", error);
+      alert("Unable to save supplement assignment right now. Please try again.");
+    }
+  }
+
+  async function handleDeleteClientSupplement(id: string) {
+    try {
+      await deleteClientSupplementPrescription(id);
+      setClientSupplements((prev) => prev.filter((row) => row.id !== id));
+    } catch (error) {
+      console.error("[NutritionTab] delete client supplement failed:", error);
+      alert("Unable to delete supplement assignment right now. Please try again.");
+    }
+  }
+
   // ── Inner tab toggle ──────────────────────────────────────────────────
 
   const innerTabToggle = (
@@ -141,6 +292,16 @@ export function NutritionTab({ clientId }: { clientId: string }) {
       >
         Food Log
       </button>
+      <button
+        onClick={() => setInnerTab("supplements")}
+        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+          innerTab === "supplements"
+            ? "bg-accent/15 text-accent"
+            : "text-muted hover:text-foreground hover:bg-black/5"
+        }`}
+      >
+        Supplements
+      </button>
     </div>
   );
 
@@ -151,6 +312,89 @@ export function NutritionTab({ clientId }: { clientId: string }) {
       <div className="space-y-4">
         {innerTabToggle}
         <FoodLogViewer clientId={clientId} plan={clientPlan ?? null} />
+      </div>
+    );
+  }
+
+  if (innerTab === "supplements") {
+    return (
+      <div className="space-y-4">
+        {innerTabToggle}
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-muted">
+            {clientSupplements.length} assigned supplement
+            {clientSupplements.length !== 1 ? "s" : ""}
+          </p>
+          <button
+            onClick={() => {
+              setEditingSupplement(null);
+              setShowSupplementEditor(true);
+            }}
+            disabled={supplementTemplates.length === 0}
+            className="px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-light transition-colors flex items-center gap-1.5"
+          >
+            <Plus size={12} /> Assign Supplement
+          </button>
+        </div>
+
+        {loadingSupplements && (
+          <div className="glass-card p-8 text-center">
+            <p className="text-xs text-muted animate-pulse">Loading supplements...</p>
+          </div>
+        )}
+
+        {!loadingSupplements && supplementTemplates.length === 0 && (
+          <div className="glass-card p-10 text-center">
+            <Pill size={32} className="mx-auto mb-3 text-muted/30" />
+            <p className="text-sm font-semibold text-foreground">No supplement templates yet</p>
+            <p className="text-xs text-muted mt-1">
+              Create supplements in Main Nutrition first, then assign them here.
+            </p>
+          </div>
+        )}
+
+        {!loadingSupplements && supplementTemplates.length > 0 && clientSupplements.length === 0 && (
+          <div className="glass-card p-10 text-center">
+            <Pill size={32} className="mx-auto mb-3 text-muted/30" />
+            <p className="text-sm font-semibold text-foreground">No supplements assigned</p>
+            <p className="text-xs text-muted mt-1">
+              Assign supplements from your template library.
+            </p>
+          </div>
+        )}
+
+        {!loadingSupplements && clientSupplements.length > 0 && (
+          <div className="space-y-3">
+            {clientSupplements.map((prescription) => (
+              <ClientSupplementCard
+                key={prescription.id}
+                prescription={prescription}
+                onEdit={() => {
+                  setEditingSupplement(prescription);
+                  setShowSupplementEditor(true);
+                }}
+                onDelete={() => handleDeleteClientSupplement(prescription.id)}
+              />
+            ))}
+          </div>
+        )}
+
+        {showSupplementEditor && supplementTemplates.length > 0 && (
+          <ClientSupplementEditorModal
+            templates={supplementTemplates}
+            initial={
+              editingSupplement
+                ? prescriptionToDraft(editingSupplement)
+                : templateToPrescriptionDraft(supplementTemplates[0])
+            }
+            onClose={() => {
+              setShowSupplementEditor(false);
+              setEditingSupplement(null);
+            }}
+            onSave={handleSaveClientSupplement}
+            lockTemplate={!!editingSupplement}
+          />
+        )}
       </div>
     );
   }
@@ -709,6 +953,264 @@ function PlanSummaryCard({
       </div>
       {/* Micronutrient collapsible */}
       <MicronutrientCollapsible micronutrients={micronutrients} compact />
+    </div>
+  );
+}
+
+function ClientSupplementCard({
+  prescription,
+  onEdit,
+  onDelete,
+}: {
+  prescription: ClientSupplementPrescription;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="glass-card p-4 space-y-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h4 className="text-sm font-semibold text-foreground truncate">
+            {prescription.supplementName}
+          </h4>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-accent/15 text-accent">
+              {SUPPLEMENT_PRESCRIPTION_FREQUENCY_LABELS[prescription.dosageFrequency]}
+            </span>
+            {prescription.dosage && (
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-black/10 text-muted">
+                {prescription.dosage}
+              </span>
+            )}
+            {!prescription.isActive && (
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-black/10 text-muted">
+                inactive
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={onEdit}
+            className="px-2 py-1 rounded text-xs text-foreground hover:bg-black/5 transition-colors"
+          >
+            Edit
+          </button>
+          <button
+            onClick={onDelete}
+            className="px-2 py-1 rounded text-xs text-red-500 hover:bg-red-50 transition-colors"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+
+      {prescription.timing && (
+        <div className="flex items-start gap-2 text-[11px] text-muted">
+          <Clock3 size={12} className="mt-0.5 shrink-0" />
+          <span>{prescription.timing}</span>
+        </div>
+      )}
+
+      {prescription.purchaseUrl && (
+        <a
+          href={prescription.purchaseUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1.5 text-[11px] text-accent hover:underline"
+        >
+          <ExternalLink size={12} />
+          Purchase link
+        </a>
+      )}
+
+      {prescription.notes && (
+        <p className="text-xs text-muted bg-black/[0.03] rounded-md p-2">{prescription.notes}</p>
+      )}
+    </div>
+  );
+}
+
+function ClientSupplementEditorModal({
+  templates,
+  initial,
+  onClose,
+  onSave,
+  lockTemplate,
+}: {
+  templates: SupplementTemplate[];
+  initial: SupplementPrescriptionDraft;
+  onClose: () => void;
+  onSave: (draft: SupplementPrescriptionDraft) => Promise<void>;
+  lockTemplate: boolean;
+}) {
+  const [draft, setDraft] = useState<SupplementPrescriptionDraft>(initial);
+  const [saving, setSaving] = useState(false);
+
+  function applyTemplateDefaults(templateId: string) {
+    const template = templates.find((item) => item.id === templateId);
+    if (!template) return;
+    setDraft((prev) => ({
+      ...prev,
+      supplementTemplateId: template.id,
+      supplementName: template.name,
+      dosageFrequency:
+        template.dosageFrequency === "as_prescribed"
+          ? "as_prescribed"
+          : template.dosageFrequency,
+      timing: template.timing,
+      purchaseUrl: template.purchaseUrl,
+      notes: template.notes,
+      isActive: template.isActive,
+    }));
+  }
+
+  async function handleSubmit() {
+    if (!draft.supplementTemplateId || !draft.supplementName.trim()) return;
+    setSaving(true);
+    try {
+      await onSave({
+        ...draft,
+        supplementName: draft.supplementName.trim(),
+        dosage: draft.dosage.trim(),
+        timing: draft.timing.trim(),
+        purchaseUrl: draft.purchaseUrl.trim(),
+        notes: draft.notes.trim(),
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative w-full max-w-lg glass-card p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold text-foreground">
+            {draft.id ? "Edit Assigned Supplement" : "Assign Supplement"}
+          </h3>
+          <button
+            onClick={onClose}
+            className="text-xs text-muted hover:text-foreground transition-colors"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <label className="block">
+            <span className="text-[11px] font-medium text-muted">Supplement Template</span>
+            <select
+              value={draft.supplementTemplateId}
+              onChange={(e) => applyTemplateDefaults(e.target.value)}
+              disabled={lockTemplate}
+              className="mt-1 w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm disabled:bg-black/5 disabled:text-muted"
+            >
+              {templates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="text-[11px] font-medium text-muted">Name</span>
+            <input
+              value={draft.supplementName}
+              onChange={(e) => setDraft((prev) => ({ ...prev, supplementName: e.target.value }))}
+              className="mt-1 w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
+              placeholder="Creatine Monohydrate"
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-[11px] font-medium text-muted">Dosage</span>
+            <input
+              value={draft.dosage}
+              onChange={(e) => setDraft((prev) => ({ ...prev, dosage: e.target.value }))}
+              className="mt-1 w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
+              placeholder="5g"
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-[11px] font-medium text-muted">Dosage Frequency</span>
+            <select
+              value={draft.dosageFrequency}
+              onChange={(e) =>
+                setDraft((prev) => ({
+                  ...prev,
+                  dosageFrequency: e.target.value as SupplementPrescriptionFrequency,
+                }))
+              }
+              className="mt-1 w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
+            >
+              {SUPPLEMENT_PRESCRIPTION_FREQUENCIES.map((frequency) => (
+                <option key={frequency} value={frequency}>
+                  {SUPPLEMENT_PRESCRIPTION_FREQUENCY_LABELS[frequency]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="text-[11px] font-medium text-muted">Timing</span>
+            <input
+              value={draft.timing}
+              onChange={(e) => setDraft((prev) => ({ ...prev, timing: e.target.value }))}
+              className="mt-1 w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
+              placeholder="With breakfast"
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-[11px] font-medium text-muted">Purchase Link</span>
+            <input
+              value={draft.purchaseUrl}
+              onChange={(e) => setDraft((prev) => ({ ...prev, purchaseUrl: e.target.value }))}
+              className="mt-1 w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
+              placeholder="https://..."
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-[11px] font-medium text-muted">Notes</span>
+            <textarea
+              value={draft.notes}
+              onChange={(e) => setDraft((prev) => ({ ...prev, notes: e.target.value }))}
+              className="mt-1 w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm min-h-[96px]"
+              placeholder="Any client-specific instruction..."
+            />
+          </label>
+
+          <label className="inline-flex items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={draft.isActive}
+              onChange={(e) => setDraft((prev) => ({ ...prev, isActive: e.target.checked }))}
+            />
+            Active
+          </label>
+        </div>
+
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-3 py-2 rounded-lg border border-black/10 text-sm text-foreground hover:bg-black/5"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={!draft.supplementName.trim() || saving}
+            className="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-50"
+          >
+            {saving ? "Saving..." : "Save Assignment"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

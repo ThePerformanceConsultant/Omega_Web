@@ -348,6 +348,12 @@ import type {
   ClientCheckInTemplate,
   ClientCheckInHistoryItem,
   CheckInHistoryStatus,
+  SupplementTemplate,
+  SupplementTemplateFrequency,
+  ClientSupplementPrescription,
+  SupplementPrescriptionFrequency,
+  SupplementAdherenceLog,
+  NutritionDailyNote,
 } from "../types";
 
 /** Optional function that resolves a recipe by ID (from the in-memory recipe store). */
@@ -1734,6 +1740,241 @@ export async function fetchFoodLogEntries(
     .order("logged_at", { ascending: true });
   if (error) throw error;
   return (data ?? []).map(fromDbFoodLogEntry);
+}
+
+function fromDbSupplementTemplate(row: any): SupplementTemplate {
+  const frequency = String(row.dosage_frequency ?? "daily") as SupplementTemplateFrequency;
+  return {
+    id: row.id,
+    coachId: row.coach_id,
+    name: row.name ?? "",
+    dosageFrequency: frequency,
+    timing: row.timing ?? "",
+    purchaseUrl: row.purchase_url ?? "",
+    notes: row.notes ?? "",
+    isActive: row.is_active ?? true,
+    createdAt: row.created_at ?? new Date().toISOString(),
+    updatedAt: row.updated_at ?? new Date().toISOString(),
+  };
+}
+
+function fromDbClientSupplementPrescription(row: any): ClientSupplementPrescription {
+  const frequency = String(row.dosage_frequency ?? "daily") as SupplementPrescriptionFrequency;
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    supplementTemplateId: row.supplement_template_id,
+    supplementName: row.supplement_name ?? "",
+    dosage: row.dosage ?? "",
+    dosageFrequency: frequency,
+    timing: row.timing ?? "",
+    purchaseUrl: row.purchase_url ?? "",
+    notes: row.notes ?? "",
+    isActive: row.is_active ?? true,
+    createdAt: row.created_at ?? new Date().toISOString(),
+    updatedAt: row.updated_at ?? new Date().toISOString(),
+  };
+}
+
+function fromDbSupplementAdherenceLog(row: any): SupplementAdherenceLog {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    clientSupplementPrescriptionId: row.client_supplement_prescription_id,
+    date: row.date,
+    taken: row.taken ?? false,
+    takenAt: row.taken_at ?? null,
+    createdAt: row.created_at ?? new Date().toISOString(),
+    updatedAt: row.updated_at ?? new Date().toISOString(),
+  };
+}
+
+function fromDbNutritionDailyNote(row: any): NutritionDailyNote {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    date: row.date,
+    note: row.note ?? "",
+    createdAt: row.created_at ?? new Date().toISOString(),
+    updatedAt: row.updated_at ?? new Date().toISOString(),
+  };
+}
+
+export async function fetchSupplementTemplates(coachId?: string): Promise<SupplementTemplate[]> {
+  const client = getClient();
+  let query = client
+    .from("supplement_templates")
+    .select("*")
+    .order("name", { ascending: true });
+
+  if (coachId) {
+    query = query.eq("coach_id", coachId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []).map(fromDbSupplementTemplate);
+}
+
+export async function saveSupplementTemplate(
+  template: {
+    id?: string;
+    name: string;
+    dosageFrequency: SupplementTemplateFrequency;
+    timing: string;
+    purchaseUrl: string;
+    notes: string;
+    isActive?: boolean;
+  },
+  coachId: string
+): Promise<SupplementTemplate> {
+  const client = getClient();
+
+  let resolvedCoachId = coachId;
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID_REGEX.test(coachId)) {
+    const realId = await getCoachId();
+    if (!realId) throw new Error("[saveSupplementTemplate] No authenticated coach session");
+    resolvedCoachId = realId;
+  }
+
+  const payload = {
+    coach_id: resolvedCoachId,
+    name: template.name.trim(),
+    dosage_frequency: template.dosageFrequency,
+    timing: template.timing.trim() || null,
+    purchase_url: template.purchaseUrl.trim() || null,
+    notes: template.notes.trim() || null,
+    is_active: template.isActive ?? true,
+  };
+
+  if (template.id) {
+    const { data, error } = await client
+      .from("supplement_templates")
+      .update(payload)
+      .eq("id", template.id)
+      .eq("coach_id", resolvedCoachId)
+      .select("*")
+      .single();
+    if (error) throw error;
+    return fromDbSupplementTemplate(data);
+  }
+
+  const { data, error } = await client
+    .from("supplement_templates")
+    .insert(payload)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return fromDbSupplementTemplate(data);
+}
+
+export async function deleteSupplementTemplate(id: string) {
+  const client = getClient();
+  const { error } = await client.from("supplement_templates").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function fetchClientSupplementPrescriptions(clientId: string): Promise<ClientSupplementPrescription[]> {
+  const client = getClient();
+  const { data, error } = await client
+    .from("client_supplement_prescriptions")
+    .select("*")
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map(fromDbClientSupplementPrescription);
+}
+
+export async function saveClientSupplementPrescription(
+  prescription: {
+    id?: string;
+    clientId: string;
+    supplementTemplateId: string;
+    supplementName: string;
+    dosage: string;
+    dosageFrequency: SupplementPrescriptionFrequency;
+    timing: string;
+    purchaseUrl: string;
+    notes: string;
+    isActive?: boolean;
+  }
+): Promise<ClientSupplementPrescription> {
+  const client = getClient();
+  const payload = {
+    client_id: prescription.clientId,
+    supplement_template_id: prescription.supplementTemplateId,
+    supplement_name: prescription.supplementName.trim(),
+    dosage: prescription.dosage.trim() || null,
+    dosage_frequency: prescription.dosageFrequency,
+    timing: prescription.timing.trim() || null,
+    purchase_url: prescription.purchaseUrl.trim() || null,
+    notes: prescription.notes.trim() || null,
+    is_active: prescription.isActive ?? true,
+  };
+
+  if (prescription.id) {
+    const { data, error } = await client
+      .from("client_supplement_prescriptions")
+      .update(payload)
+      .eq("id", prescription.id)
+      .eq("client_id", prescription.clientId)
+      .select("*")
+      .single();
+    if (error) throw error;
+    return fromDbClientSupplementPrescription(data);
+  }
+
+  const { data, error } = await client
+    .from("client_supplement_prescriptions")
+    .insert(payload)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return fromDbClientSupplementPrescription(data);
+}
+
+export async function deleteClientSupplementPrescription(id: string) {
+  const client = getClient();
+  const { error } = await client
+    .from("client_supplement_prescriptions")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+}
+
+export async function fetchSupplementAdherenceLogs(
+  clientId: string,
+  startDate: string,
+  endDate: string
+): Promise<SupplementAdherenceLog[]> {
+  const client = getClient();
+  const { data, error } = await client
+    .from("supplement_adherence_logs")
+    .select("*")
+    .eq("client_id", clientId)
+    .gte("date", startDate)
+    .lte("date", endDate)
+    .order("date", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map(fromDbSupplementAdherenceLog);
+}
+
+export async function fetchNutritionDailyNotes(
+  clientId: string,
+  startDate: string,
+  endDate: string
+): Promise<NutritionDailyNote[]> {
+  const client = getClient();
+  const { data, error } = await client
+    .from("nutrition_daily_notes")
+    .select("*")
+    .eq("client_id", clientId)
+    .gte("date", startDate)
+    .lte("date", endDate)
+    .order("date", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map(fromDbNutritionDailyNote);
 }
 
 // ── Exercises ────────────────────────────────────────────
