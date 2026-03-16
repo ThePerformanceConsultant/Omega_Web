@@ -770,7 +770,7 @@ function IngredientOptionContent({ option }: { option: MealOption }) {
         return (
           <div key={ing.id} className="flex items-center gap-2 text-[10px]">
             <span className="flex-1 text-foreground truncate">
-              {usda?.name ?? ing.name ?? `FDC#${ing.fdcId}`}
+              {usda?.name ?? `FDC#${ing.fdcId}`}
             </span>
             <span className="text-muted tabular-nums shrink-0">
               {Math.round(ing.gramWeight)}g
@@ -1181,7 +1181,7 @@ function ClientSupplementEditorModal({
               value={draft.notes}
               onChange={(e) => setDraft((prev) => ({ ...prev, notes: e.target.value }))}
               className="mt-1 w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm min-h-[96px]"
-              placeholder="Any client-specific instruction..."
+              placeholder="Any instructions for the client..."
             />
           </label>
 
@@ -1204,7 +1204,7 @@ function ClientSupplementEditorModal({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={!draft.supplementName.trim() || saving}
+            disabled={!draft.supplementTemplateId || !draft.supplementName.trim() || saving}
             className="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-50"
           >
             {saving ? "Saving..." : "Save Assignment"}

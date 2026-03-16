@@ -18,6 +18,7 @@ const SOURCE_LABELS: Record<string, string> = {
   usda_survey: "USDA",
   mccance_widdowson: "McCance",
   open_food_facts: "Open Food Facts",
+  fatsecret_uk: "FatSecret UK",
   coach_custom: "Custom",
 };
 
