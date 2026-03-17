@@ -210,6 +210,7 @@ export const messageStore = {
 
   async sendMessage(conversationId: string, content: string, senderId: string) {
     const now = new Date().toISOString();
+    const previousConversation = conversations.find((c) => c.id === conversationId) ?? null;
     // Optimistic local update
     const tempMsg: Message = {
       id: `temp-${Date.now()}`,
@@ -239,6 +240,13 @@ export const messageStore = {
       );
       emitChange();
     } catch (err) {
+      messages = messages.filter((m) => m.id !== tempMsg.id);
+      conversations = conversations.map((c) =>
+        c.id === conversationId
+          ? (previousConversation ?? c)
+          : c
+      );
+      emitChange();
       console.error("[messageStore] sendMessage failed:", err);
     }
   },

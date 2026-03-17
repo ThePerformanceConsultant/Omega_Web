@@ -35,3 +35,18 @@ When a live feature is reported broken, do not patch by assumption.
 5. Never run destructive data actions during incident response unless the user explicitly asks.
 
 This workflow is mandatory for metrics, messages, programs, meal plans, forms, and roadmap data paths.
+
+## Quantitative/Integration Rule (Non-Negotiable)
+
+For external API, schema, migration, limits, billing, quotas, or any quantitative behavior:
+
+1. Do not use guessed terms, inferred limits, or heuristic-only mappings when official docs/endpoints can provide exact values.
+2. Derive terms/parameters directly from authoritative sources first:
+   - official API docs,
+   - official discovery/list endpoints,
+   - live response payloads.
+3. In execution notes, state exactly which source defined each critical parameter.
+4. If exact values are unavailable in docs, call this out explicitly and run a deterministic discovery step before any write/import run.
+5. Prefer two-step workflows:
+   - discovery/export of exact terms,
+   - reviewed execution using only discovered terms.
