@@ -14,6 +14,12 @@
   - `./scripts/sync-to-coaching-app-web.sh`
 - The sync is complete only when the script reports:
   - `SYNC_OK: Coaching App/web is in parity with Omega_Web`
+- After verification passes, the agent must proactively prompt the user to run sync:
+  - `Do you want me to run npm run sync:web:verified now?`
+- If the user confirms, the agent runs it immediately in the same turn and reports the `SYNC_OK` result.
+- A web task is not complete until either:
+  - `SYNC_OK` is confirmed, or
+  - the user explicitly declines/defers sync.
 
 ## Pre-Deploy Checklist
 
