@@ -8,8 +8,12 @@
 
 ## Sync Rule
 
-- If the same feature also exists in another local copy (for example `Coaching App/web`), treat that copy as secondary.
+- `Coaching App/web` is a mirror copy only. Do not implement web features there first.
 - Never assume changes in another folder are deployed unless they are present in this repo and pushed to `origin/main`.
+- After every web commit in this repo, and only after build verification, run:
+  - `./scripts/sync-to-coaching-app-web.sh`
+- The sync is complete only when the script reports:
+  - `SYNC_OK: Coaching App/web is in parity with Omega_Web`
 
 ## Pre-Deploy Checklist
 

@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "fatsecret:sync-uk": "node scripts/sync-fatsecret-uk.mjs"
+    "fatsecret:sync-uk": "node scripts/sync-fatsecret-uk.mjs",
+    "sync:web:verified": "bash ./scripts/sync-to-coaching-app-web.sh"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

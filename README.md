@@ -122,7 +122,7 @@ Troubleshooting:
 ## Source-Of-Truth Workflow
 
 - This repo (`Omega_Web`) is the source of truth for coach web deployments.
-- If a web feature is implemented elsewhere first, it must be ported here before redeploying.
+- `Coaching App/web` is a mirror only and must not be edited first.
 - Always verify with:
 
 ```bash
@@ -131,6 +131,20 @@ npm run build
 ```
 
 - Deploy only the latest pushed commit on `main`.
+
+### Required Post-Build Sync
+
+After web changes are verified with a passing build, run:
+
+```bash
+npm run sync:web:verified
+```
+
+This command:
+
+1. Runs `npm run build` in `Omega_Web`.
+2. Mirrors the repo to `Coaching App/web`.
+3. Verifies checksum parity and exits non-zero if mismatch is found.
 
 ## Notes
 
