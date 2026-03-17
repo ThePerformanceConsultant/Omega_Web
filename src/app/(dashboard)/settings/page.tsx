@@ -73,7 +73,7 @@ const notificationFields: Array<{
   {
     kind: "insight_published",
     label: "Insight Published",
-    description: "When a new client insight is published.",
+    description: "When a new coach insight rotates onto a client dashboard.",
   },
 ];
 
