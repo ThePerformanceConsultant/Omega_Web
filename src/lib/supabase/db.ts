@@ -149,7 +149,11 @@ function toIngredientCatalogItem(row: IngredientCatalogRow): USDAIngredient {
     fdcId: Number(row.fdc_id),
     name: row.name ?? "",
     category: normalizeIngredientCategory(row.category) ?? "Uncategorized",
-    source: row.data_type === "coach_custom" ? "coach_custom" : row.source,
+    source: row.data_type === "coach_custom"
+      ? "coach_custom"
+      : row.data_type === "client_custom"
+        ? "client_custom"
+        : row.source,
     nutrients,
     portions,
   };

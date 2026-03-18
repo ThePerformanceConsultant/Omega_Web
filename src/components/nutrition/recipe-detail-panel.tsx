@@ -5,6 +5,7 @@ import { X, ChevronDown, ChevronRight, ChefHat, Clock, Users } from "lucide-reac
 import type { Recipe } from "@/lib/types";
 import { getIngredientByFdcId } from "@/lib/nutrition-utils";
 import { NUTRIENT_DEFINITIONS } from "@/lib/ingredient-data";
+import { formatPercentRda } from "@/lib/nutrient-reference-values";
 
 interface RecipeDetailPanelProps {
   recipe: Recipe;
@@ -173,14 +174,22 @@ export function RecipeDetailPanel({ recipe, onClose }: RecipeDetailPanelProps) {
                       {group}
                     </h5>
                     <div className="space-y-0.5">
-                      {items.map((item) => (
-                        <div key={item.key} className="flex items-center justify-between text-[10px] py-0.5">
-                          <span className="text-muted">{item.label}</span>
-                          <span className="font-medium tabular-nums">
-                            {item.value < 1 ? item.value.toFixed(2) : item.value.toFixed(1)} {item.unit}
-                          </span>
-                        </div>
-                      ))}
+                      {items.map((item) => {
+                        const percentRda = formatPercentRda(item.key, item.value);
+                        return (
+                          <div key={item.key} className="flex items-center justify-between text-[10px] py-0.5">
+                            <span className="text-muted">{item.label}</span>
+                            <span className="font-medium tabular-nums inline-flex items-center gap-1">
+                              <span>
+                                {item.value < 1 ? item.value.toFixed(2) : item.value.toFixed(1)} {item.unit}
+                              </span>
+                              {percentRda && (
+                                <span className="text-accent/90 text-[9px]">{percentRda}</span>
+                              )}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ) : null

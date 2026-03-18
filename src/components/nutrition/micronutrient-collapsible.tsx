@@ -6,6 +6,7 @@ import {
   groupMicronutrients,
   type MicronutrientGroupItem,
 } from "@/lib/plan-nutrition-utils";
+import { formatPercentRda } from "@/lib/nutrient-reference-values";
 
 interface MicronutrientCollapsibleProps {
   micronutrients: Record<string, number>;
@@ -125,17 +126,25 @@ function MicroGroupSection({
 
       {open && (
         <div className="px-2.5 pb-2 grid grid-cols-2 gap-x-4 gap-y-0.5">
-          {items.map((item) => (
-            <div key={item.key} className="flex items-baseline justify-between">
-              <span className="text-[9px] text-muted truncate pr-1">
-                {item.label}
-              </span>
-              <span className="text-[9px] font-medium text-foreground tabular-nums shrink-0">
-                {formatValue(item.value)}
-                <span className="text-muted ml-0.5">{item.unit}</span>
-              </span>
-            </div>
-          ))}
+          {items.map((item) => {
+            const percentRda = formatPercentRda(item.key, item.value);
+            return (
+              <div key={item.key} className="flex items-baseline justify-between">
+                <span className="text-[9px] text-muted truncate pr-1">
+                  {item.label}
+                </span>
+                <span className="text-[9px] font-medium text-foreground tabular-nums shrink-0 inline-flex items-center gap-1">
+                  <span>
+                    {formatValue(item.value)}
+                    <span className="text-muted ml-0.5">{item.unit}</span>
+                  </span>
+                  {percentRda && (
+                    <span className="text-accent/90 font-medium">{percentRda}</span>
+                  )}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

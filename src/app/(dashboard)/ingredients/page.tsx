@@ -30,6 +30,7 @@ const SOURCE_LABELS: Record<string, string> = {
   open_food_facts: "Open Food Facts",
   fatsecret_uk: "FatSecret UK",
   coach_custom: "Custom",
+  client_custom: "Client Custom",
 };
 
 function getNutrient(ingredient: USDAIngredient, key: string): number {
@@ -496,6 +497,7 @@ function IngredientRow({
   const fCal = clamp(fat) * 9;
   const total = pCal + cCal + fCal || 1;
   const sourceLabel = SOURCE_LABELS[ingredient.source ?? "usda_survey"] ?? "USDA";
+  const isPendingClientCustom = ingredient.source === "client_custom";
 
   return (
     <button
@@ -519,6 +521,11 @@ function IngredientRow({
       <span className="text-[10px] font-medium text-muted/70 bg-black/[0.03] px-2 py-0.5 rounded shrink-0 ml-3">
         {sourceLabel}
       </span>
+      {isPendingClientCustom && (
+        <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded shrink-0 ml-2">
+          Pending Review
+        </span>
+      )}
     </button>
   );
 }

@@ -8,6 +8,7 @@ import {
   NUTRIENT_DEFINITIONS,
 } from "@/lib/ingredient-data";
 import { NUTRIENT_GROUPS, NutrientGroup } from "@/lib/types";
+import { formatPercentRda } from "@/lib/nutrient-reference-values";
 
 interface IngredientDetailModalProps {
   ingredient: USDAIngredient;
@@ -20,6 +21,7 @@ const SOURCE_LABELS: Record<string, string> = {
   open_food_facts: "Open Food Facts",
   fatsecret_uk: "FatSecret UK",
   coach_custom: "Custom",
+  client_custom: "Client Custom",
 };
 
 /** Compute nutrient value scaled to a given portion gram weight.
@@ -83,6 +85,7 @@ export function IngredientDetailModal({ ingredient, onClose }: IngredientDetailM
 
   const grouped = useMemo(() => groupNutrients(NUTRIENT_DEFINITIONS), []);
   const sourceLabel = SOURCE_LABELS[ingredient.source ?? "usda_survey"] ?? "USDA";
+  const isPendingClientCustom = ingredient.source === "client_custom";
 
   function toggleGroup(group: NutrientGroup) {
     setExpandedGroups((prev) => {
@@ -119,6 +122,11 @@ export function IngredientDetailModal({ ingredient, onClose }: IngredientDetailM
                   <Database size={9} />
                   {sourceLabel}
                 </span>
+                {isPendingClientCustom && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700">
+                    Pending Review
+                  </span>
+                )}
                 <span className="text-xs text-muted">{ingredient.category}</span>
               </div>
             </div>
@@ -243,6 +251,9 @@ export function IngredientDetailModal({ ingredient, onClose }: IngredientDetailM
                   <div className="mt-1 rounded-lg border border-black/5 overflow-hidden">
                     {available.map((n, i) => {
                       const value = scaled[n.key];
+                      const rdaText = value != null
+                        ? formatPercentRda(n.key, Math.max(0, value))
+                        : null;
                       return (
                         <div
                           key={n.key}
@@ -251,8 +262,13 @@ export function IngredientDetailModal({ ingredient, onClose }: IngredientDetailM
                           }`}
                         >
                           <span className="text-xs text-foreground">{n.label}</span>
-                          <span className="text-xs font-semibold text-foreground tabular-nums">
-                            {fmt(value)} <span className="text-muted font-normal">{n.unit}</span>
+                          <span className="text-xs font-semibold text-foreground tabular-nums inline-flex items-center gap-1">
+                            <span>
+                              {fmt(value)} <span className="text-muted font-normal">{n.unit}</span>
+                            </span>
+                            {rdaText && (
+                              <span className="text-[10px] text-accent font-medium">{rdaText}</span>
+                            )}
                           </span>
                         </div>
                       );
