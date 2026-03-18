@@ -1,5 +1,4 @@
-import { useMemo } from "react";
-import { useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { ClientProgram, ProgramWithPhases } from "./types";
 import {
   isSupabaseConfigured,
@@ -301,7 +300,7 @@ export const clientProgramStore = {
 
 export function useClientPrograms(clientId: string): ClientProgram[] {
   // Trigger Supabase load on first access
-  useMemo(() => {
+  useEffect(() => {
     clientProgramStore.loadFromSupabase(clientId);
   }, [clientId]);
 
