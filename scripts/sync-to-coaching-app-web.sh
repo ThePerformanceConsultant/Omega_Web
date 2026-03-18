@@ -21,7 +21,7 @@ rsync -a --delete \
   --exclude '.git' \
   --exclude 'node_modules' \
   --exclude '.next' \
-  --exclude 'supabase' \
+  --exclude '/supabase' \
   "${SOURCE}" "${TARGET}"
 
 echo "[3/4] Verifying parity..."
@@ -30,7 +30,7 @@ PARITY_DIFF="$(
     --exclude '.git' \
     --exclude 'node_modules' \
     --exclude '.next' \
-    --exclude 'supabase' \
+    --exclude '/supabase' \
     "${SOURCE}" "${TARGET}" \
     | awk '$1 != ".d..t...." {print}'
 )"
