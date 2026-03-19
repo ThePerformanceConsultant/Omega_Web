@@ -6,7 +6,12 @@ import {
   groupMicronutrients,
   type MicronutrientGroupItem,
 } from "@/lib/plan-nutrition-utils";
-import { formatPercentRda } from "@/lib/nutrient-reference-values";
+import {
+  formatPercentRdaInline,
+  getNrvByNutrientKey,
+  getPercentRda,
+  getUlByNutrientKey,
+} from "@/lib/nutrient-reference-values";
 
 interface MicronutrientCollapsibleProps {
   micronutrients: Record<string, number>;
@@ -19,6 +24,41 @@ function formatValue(value: number): string {
   if (value < 1) return value.toFixed(2);
   if (value < 10) return value.toFixed(1);
   return Math.round(value).toString();
+}
+
+function stateForNutrient(item: MicronutrientGroupItem): "accent" | "success" | "danger" {
+  const ul = getUlByNutrientKey(item.key);
+  if (ul != null && item.value > ul) return "danger";
+
+  const nrv = getNrvByNutrientKey(item.key);
+  if (nrv != null) {
+    const lower = nrv * 0.9;
+    const upper = nrv * 1.1;
+    if (item.value >= lower && item.value <= upper) return "success";
+  }
+  return "accent";
+}
+
+function stateClasses(state: "accent" | "success" | "danger"): {
+  border: string;
+  fill: string;
+} {
+  if (state === "danger") {
+    return {
+      border: "border-red-500/60",
+      fill: "bg-red-500/25",
+    };
+  }
+  if (state === "success") {
+    return {
+      border: "border-emerald-600/55",
+      fill: "bg-emerald-500/25",
+    };
+  }
+  return {
+    border: "border-amber-500/60",
+    fill: "bg-amber-500/25",
+  };
 }
 
 const GROUP_CONFIG = {
@@ -125,22 +165,52 @@ function MicroGroupSection({
       </button>
 
       {open && (
-        <div className="px-2.5 pb-2 grid grid-cols-2 gap-x-4 gap-y-0.5">
+        <div
+          className={
+            compact
+              ? "px-2.5 pb-2 grid grid-cols-1 gap-x-4 gap-y-1"
+              : "px-2.5 pb-2 grid grid-cols-2 gap-x-4 gap-y-1"
+          }
+        >
           {items.map((item) => {
-            const percentRda = formatPercentRda(item.key, item.value);
+            const nrv = getNrvByNutrientKey(item.key);
+            const percent = getPercentRda(item.key, item.value);
+
+            if (nrv != null && percent != null) {
+              const state = stateForNutrient(item);
+              const classes = stateClasses(state);
+              const progress = Math.max(0, Math.min(item.value / nrv, 1));
+
+              return (
+                <div key={item.key}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] text-muted truncate min-w-0 flex-1">
+                      {item.label}
+                    </span>
+                    <div
+                      className={`relative h-6 rounded-full border ${classes.border} bg-black/5 overflow-hidden shrink-0 w-[232px]`}
+                    >
+                      <div
+                        className={`absolute inset-y-0 left-0 rounded-full ${classes.fill}`}
+                        style={{ width: `${progress * 100}%` }}
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center px-3 text-[10px] font-semibold text-foreground tabular-nums whitespace-nowrap">
+                        {formatValue(item.value)} {item.unit} / {formatValue(nrv)} {item.unit} ({formatPercentRdaInline(percent)})
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
             return (
               <div key={item.key} className="flex items-baseline justify-between">
                 <span className="text-[9px] text-muted truncate pr-1">
                   {item.label}
                 </span>
-                <span className="text-[9px] font-medium text-foreground tabular-nums shrink-0 inline-flex items-center gap-1">
-                  <span>
-                    {formatValue(item.value)}
-                    <span className="text-muted ml-0.5">{item.unit}</span>
-                  </span>
-                  {percentRda && (
-                    <span className="text-accent/90 font-medium">{percentRda}</span>
-                  )}
+                <span className="text-[9px] font-medium text-foreground tabular-nums shrink-0">
+                  {formatValue(item.value)}
+                  <span className="text-muted ml-0.5">{item.unit}</span>
                 </span>
               </div>
             );
