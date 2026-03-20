@@ -358,6 +358,7 @@ import type {
   SupplementPrescriptionFrequency,
   SupplementAdherenceLog,
   NutritionDailyNote,
+  NutritionDayStatus,
 } from "../types";
 
 /** Optional function that resolves a recipe by ID (from the in-memory recipe store). */
@@ -1804,6 +1805,17 @@ function fromDbNutritionDailyNote(row: any): NutritionDailyNote {
   };
 }
 
+function fromDbNutritionDayStatus(row: any): NutritionDayStatus {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    date: row.date,
+    status: row.status === "complete" ? "complete" : "incomplete",
+    createdAt: row.created_at ?? new Date().toISOString(),
+    updatedAt: row.updated_at ?? new Date().toISOString(),
+  };
+}
+
 export async function fetchSupplementTemplates(coachId?: string): Promise<SupplementTemplate[]> {
   const client = getClient();
   let query = client
@@ -1979,6 +1991,23 @@ export async function fetchNutritionDailyNotes(
     .order("date", { ascending: true });
   if (error) throw error;
   return (data ?? []).map(fromDbNutritionDailyNote);
+}
+
+export async function fetchNutritionDayStatuses(
+  clientId: string,
+  startDate: string,
+  endDate: string
+): Promise<NutritionDayStatus[]> {
+  const client = getClient();
+  const { data, error } = await client
+    .from("nutrition_day_statuses")
+    .select("*")
+    .eq("client_id", clientId)
+    .gte("date", startDate)
+    .lte("date", endDate)
+    .order("date", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map(fromDbNutritionDayStatus);
 }
 
 // ── Exercises ────────────────────────────────────────────

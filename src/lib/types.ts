@@ -978,6 +978,15 @@ export interface NutritionDailyNote {
   updatedAt: string;
 }
 
+export interface NutritionDayStatus {
+  id: string;
+  clientId: string;
+  date: string;
+  status: "complete" | "incomplete";
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ==========================================
 // Food Log Entry Types
 // ==========================================

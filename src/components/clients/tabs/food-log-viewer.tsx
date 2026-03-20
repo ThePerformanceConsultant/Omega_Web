@@ -35,12 +35,14 @@ import type {
   ClientSupplementPrescription,
   SupplementAdherenceLog,
   NutritionDailyNote,
+  NutritionDayStatus,
 } from "@/lib/types";
 import {
   fetchFoodLogEntries,
   fetchClientSupplementPrescriptions,
   fetchSupplementAdherenceLogs,
   fetchNutritionDailyNotes,
+  fetchNutritionDayStatuses,
 } from "@/lib/supabase/db";
 import { MicronutrientCollapsible } from "@/components/nutrition/micronutrient-collapsible";
 
@@ -110,6 +112,7 @@ export function FoodLogViewer({
   const [clientSupplements, setClientSupplements] = useState<ClientSupplementPrescription[]>([]);
   const [adherenceLogs, setAdherenceLogs] = useState<SupplementAdherenceLog[]>([]);
   const [dailyNotes, setDailyNotes] = useState<NutritionDailyNote[]>([]);
+  const [dayStatuses, setDayStatuses] = useState<NutritionDayStatus[]>([]);
   const [loading, setLoading] = useState(true);
 
   const targets = useMemo(() => computePlanTargets(plan), [plan]);
@@ -153,12 +156,14 @@ export function FoodLogViewer({
       fetchFoodLogEntries(clientId, startDate, endDate),
       fetchSupplementAdherenceLogs(clientId, startDate, endDate),
       fetchNutritionDailyNotes(clientId, startDate, endDate),
+      fetchNutritionDayStatuses(clientId, startDate, endDate),
     ])
-      .then(([foodRows, adherenceRows, noteRows]) => {
+      .then(([foodRows, adherenceRows, noteRows, statusRows]) => {
         if (cancelled) return;
         setEntries(foodRows);
         setAdherenceLogs(adherenceRows);
         setDailyNotes(noteRows);
+        setDayStatuses(statusRows);
       })
       .catch((err) => {
         console.error("[FoodLogViewer] fetch error:", err);
@@ -166,6 +171,7 @@ export function FoodLogViewer({
           setEntries([]);
           setAdherenceLogs([]);
           setDailyNotes([]);
+          setDayStatuses([]);
         }
       })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -256,6 +262,11 @@ export function FoodLogViewer({
     if (viewMode !== "day") return null;
     return dailyNotes.find((row) => row.date === selectedDateKey)?.note ?? null;
   }, [dailyNotes, selectedDateKey, viewMode]);
+
+  const selectedDayStatus = useMemo(() => {
+    if (viewMode !== "day") return null;
+    return dayStatuses.find((row) => row.date === selectedDateKey)?.status ?? "incomplete";
+  }, [dayStatuses, selectedDateKey, viewMode]);
 
   const nonEmptyNotes = useMemo(
     () => dailyNotes.filter((row) => row.note.trim().length > 0),
@@ -416,6 +427,7 @@ export function FoodLogViewer({
 
       {!loading && entries.length === 0 && viewMode === "day" && (
         <>
+          <NutritionDayStatusCard status={selectedDayStatus} />
           <SupplementAdherenceCard
             prescriptions={clientSupplements}
             adherenceByPrescriptionId={adherenceByPrescriptionId}
@@ -446,6 +458,8 @@ export function FoodLogViewer({
           {/* Day view */}
           {viewMode === "day" && (
             <>
+              <NutritionDayStatusCard status={selectedDayStatus} />
+
               {Object.entries(entriesBySlot).map(([slotName, slotEntries]) => (
                 <MealSlotLogCard
                   key={slotName}
@@ -746,6 +760,13 @@ function MealSlotLogCard({
   slotName: string;
   entries: FoodLogEntry[];
 }) {
+  function formatEntryTime(value: string): string | null {
+    if (!value) return null;
+    const parsed = parseISO(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return format(parsed, "HH:mm");
+  }
+
   const slotCal = entries.reduce(
     (s, e) => s + e.calories * e.servingMultiplier,
     0
@@ -800,6 +821,8 @@ function MealSlotLogCard({
       <div className="divide-y divide-black/5">
         {entries.map((entry) => {
           const mult = entry.servingMultiplier;
+          const timeLabel = formatEntryTime(entry.loggedAt);
+          const gramLabel = entry.gramWeight > 0 ? `${Math.round(entry.gramWeight)} g` : null;
           return (
             <div
               key={entry.id}
@@ -812,6 +835,16 @@ function MealSlotLogCard({
                 <span className="text-muted tabular-nums shrink-0">
                   {entry.servingSize}
                   {mult !== 1 ? ` x${mult}` : ""}
+                </span>
+              )}
+              {gramLabel && (
+                <span className="text-muted tabular-nums shrink-0">
+                  {gramLabel}
+                </span>
+              )}
+              {timeLabel && (
+                <span className="text-muted tabular-nums shrink-0">
+                  {timeLabel}
                 </span>
               )}
               <span className="text-muted tabular-nums shrink-0 w-14 text-right">
@@ -880,6 +913,29 @@ function SupplementAdherenceCard({
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+function NutritionDayStatusCard({
+  status,
+}: {
+  status: "complete" | "incomplete" | null;
+}) {
+  const resolved = status === "complete" ? "complete" : "incomplete";
+  const pillClass =
+    resolved === "complete"
+      ? "bg-green-500/15 text-green-700"
+      : "bg-amber-500/15 text-amber-700";
+
+  return (
+    <div className="glass-card p-4">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-semibold text-foreground">Nutrition Day Status</span>
+        <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full capitalize ${pillClass}`}>
+          {resolved}
+        </span>
+      </div>
     </div>
   );
 }
