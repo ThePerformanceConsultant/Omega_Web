@@ -352,6 +352,7 @@ import type {
   ClientCheckInTemplate,
   ClientCheckInHistoryItem,
   CheckInHistoryStatus,
+  CheckInTimelineTag,
   SupplementTemplate,
   SupplementTemplateFrequency,
   ClientSupplementPrescription,
@@ -803,6 +804,7 @@ function fromDbFormTemplate(row: any) {
     assignedClientIds: [...new Set((row.form_assignments ?? []).map((a: any) => a.client_id).filter(Boolean))] as string[],
     createdAt: row.created_at ?? new Date().toISOString(),
     displayDays: row.display_days ?? null,
+    autoAssignOnSignup: row.auto_assign_on_signup ?? false,
   };
 }
 
@@ -833,6 +835,7 @@ export async function saveFormTemplateWithQuestions(template: any, coachId: stri
         schedule_days: template.schedule?.days ?? null,
         schedule_time: template.schedule?.time ?? null,
         display_days: template.displayDays ?? null,
+        auto_assign_on_signup: template.autoAssignOnSignup ?? false,
       })
       .select("id")
       .single();
@@ -849,6 +852,7 @@ export async function saveFormTemplateWithQuestions(template: any, coachId: stri
         schedule_days: template.schedule?.days ?? null,
         schedule_time: template.schedule?.time ?? null,
         display_days: template.displayDays ?? null,
+        auto_assign_on_signup: template.autoAssignOnSignup ?? false,
       })
       .eq("id", templateId);
     if (error) throw error;
@@ -885,6 +889,17 @@ export async function deleteFormTemplate(id: number) {
   await client.from("form_templates").delete().eq("id", id);
 }
 
+export class DuplicateFormAssignmentError extends Error {
+  constructor() {
+    super("This form is already assigned to this client for that date.");
+    this.name = "DuplicateFormAssignmentError";
+  }
+}
+
+export function isDuplicateFormAssignmentError(error: unknown): boolean {
+  return error instanceof DuplicateFormAssignmentError;
+}
+
 export async function createFormAssignment(templateId: number, clientId: string, dueDate: string, displayDays?: number) {
   const client = getClient();
   const { data, error } = await client
@@ -898,7 +913,12 @@ export async function createFormAssignment(templateId: number, clientId: string,
     })
     .select("id")
     .single();
-  if (error) throw error;
+  if (error) {
+    if ((error as { code?: string }).code === "23505") {
+      throw new DuplicateFormAssignmentError();
+    }
+    throw error;
+  }
   return data;
 }
 
@@ -1029,6 +1049,29 @@ function getCheckInStatus(input: {
   return due < input.now ? "missed" : "pending";
 }
 
+function getCheckInTimelineTag(input: {
+  dueDate: string | null;
+  status: CheckInHistoryStatus;
+  now: Date;
+}): CheckInTimelineTag {
+  if (input.status === "completed") return "none";
+  if (!input.dueDate) return "none";
+
+  const due = new Date(input.dueDate);
+  if (Number.isNaN(due.getTime())) return "none";
+
+  const now = new Date(input.now);
+  const dueStart = new Date(due);
+  now.setHours(0, 0, 0, 0);
+  dueStart.setHours(0, 0, 0, 0);
+  const dayDelta = Math.round((dueStart.getTime() - now.getTime()) / 86_400_000);
+
+  if (dayDelta < 0) return "overdue";
+  if (dayDelta === 0) return "due";
+  if (dayDelta <= 3) return "upcoming";
+  return "none";
+}
+
 export async function fetchClientCheckInPanelData(clientId: string): Promise<{
   templates: ClientCheckInTemplate[];
   history: ClientCheckInHistoryItem[];
@@ -1085,6 +1128,13 @@ export async function fetchClientCheckInPanelData(clientId: string): Promise<{
       )[0];
 
     const answers = (latestResponse?.form_answers ?? []).map(normalizeFormAnswer);
+    const status = getCheckInStatus({
+      assignmentStatus: row.status ?? null,
+      dueDate: row.due_date ?? null,
+      hasSubmission: !!latestResponse,
+      now,
+    });
+
     return {
       assignmentId: String(row.id),
       templateId,
@@ -1092,10 +1142,10 @@ export async function fetchClientCheckInPanelData(clientId: string): Promise<{
       formType,
       dueDate: row.due_date ?? null,
       assignedAt: row.due_date ?? latestResponse?.submitted_at ?? new Date().toISOString(),
-      status: getCheckInStatus({
-        assignmentStatus: row.status ?? null,
+      status,
+      timelineTag: getCheckInTimelineTag({
         dueDate: row.due_date ?? null,
-        hasSubmission: !!latestResponse,
+        status,
         now,
       }),
       responseId: latestResponse?.id ?? null,

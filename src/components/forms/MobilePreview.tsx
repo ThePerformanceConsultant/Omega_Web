@@ -62,27 +62,55 @@ export default function MobilePreview({ template }: MobilePreviewProps) {
 
 function PreviewQuestion({ question, index }: { question: FormQuestion; index: number }) {
   const meta = FORM_QUESTION_TYPE_META[question.questionType] ?? { label: question.questionType, description: "", icon: "HelpCircle" };
+  const isSectionHeader = question.questionType === "section_header";
 
   return (
-    <div className="rounded-xl bg-white/[0.06] border border-white/[0.08] p-3 space-y-2">
-      {/* Question header */}
-      <div className="flex items-start gap-1.5">
-        <span className="text-[10px] font-bold text-[#D4A843]">{index + 1}.</span>
-        <div className="flex-1">
-          <p className="text-[11px] font-medium text-white/90 leading-snug">
-            {question.questionText || "Question text..."}
+    <div className={`rounded-xl border p-3 space-y-2 ${isSectionHeader ? "bg-accent/10 border-accent/30" : "bg-white/[0.06] border-white/[0.08]"}`}>
+      {isSectionHeader ? (
+        <div className="space-y-1">
+          <p className="text-[11px] font-semibold text-white">
+            {question.questionText || "Section title"}
           </p>
-          <span className="text-[8px] text-white/30 uppercase tracking-wider">{meta.label}</span>
+          {question.placeholder && (
+            <p className="text-[9px] text-white/70 leading-snug">{question.placeholder}</p>
+          )}
+          <span className="text-[8px] text-white/40 uppercase tracking-wider">{meta.label}</span>
         </div>
-        {question.isRequired && (
-          <span className="text-[8px] text-red-400 font-medium">*</span>
-        )}
-      </div>
+      ) : (
+        <>
+          {/* Question header */}
+          <div className="flex items-start gap-1.5">
+            <span className="text-[10px] font-bold text-[#D4A843]">{index + 1}.</span>
+            <div className="flex-1">
+              <p className="text-[11px] font-medium text-white/90 leading-snug">
+                {question.questionText || "Question text..."}
+              </p>
+              <span className="text-[8px] text-white/30 uppercase tracking-wider">{meta.label}</span>
+            </div>
+            {question.isRequired && (
+              <span className="text-[8px] text-red-400 font-medium">*</span>
+            )}
+          </div>
 
-      {/* Type-specific preview */}
-      <div className="ml-3">
-        <QuestionTypePreview question={question} />
+          {/* Type-specific preview */}
+          <div className="ml-3">
+            <QuestionTypePreview question={question} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SignatureDrawPreview() {
+  return (
+    <div className="space-y-1.5">
+      <div className="h-16 rounded-md bg-white/[0.04] border border-white/[0.08] flex items-center justify-center">
+        <div className="w-[85%] border-b border-dashed border-[#D4A843]/40 pb-1">
+          <span className="text-[9px] text-white/35 italic">Draw signature here</span>
+        </div>
       </div>
+      <p className="text-[8px] text-white/30">Client must draw before submitting</p>
     </div>
   );
 }
@@ -200,6 +228,9 @@ function QuestionTypePreview({ question }: { question: FormQuestion }) {
           </div>
         </div>
       );
+
+    case "signature_draw":
+      return <SignatureDrawPreview />;
 
     default:
       return null;

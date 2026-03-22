@@ -373,6 +373,37 @@ export default function FormBuilderPage() {
                   </div>
                 </div>
               )}
+
+              <div className="pt-4 border-t border-black/10">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-muted mb-1">
+                      Auto-Assign On Signup
+                    </label>
+                    <p className="text-xs text-muted">
+                      Automatically assign this form to new clients with a due date of signup + 3 days.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() =>
+                      updateTemplate((prev) => ({
+                        ...prev,
+                        autoAssignOnSignup: !prev.autoAssignOnSignup,
+                      }))
+                    }
+                    className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${
+                      template.autoAssignOnSignup ? "bg-accent" : "bg-black/15"
+                    }`}
+                    aria-label="Toggle auto-assign on signup"
+                    type="button"
+                  >
+                    <span
+                      className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform"
+                      style={{ left: template.autoAssignOnSignup ? "22px" : "2px" }}
+                    />
+                  </button>
+                </div>
+              </div>
             </div>
           </section>
         </div>

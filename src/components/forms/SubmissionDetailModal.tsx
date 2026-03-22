@@ -32,6 +32,17 @@ export default function SubmissionDetailModal({ submission, template, onClose, o
   }
 
   function renderAnswer(question: FormQuestion, index: number) {
+    if (question.questionType === "section_header") {
+      return (
+        <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2">
+          <p className="text-xs font-semibold text-accent">Section Header</p>
+          {question.placeholder && (
+            <p className="text-sm text-muted mt-1 whitespace-pre-wrap">{question.placeholder}</p>
+          )}
+        </div>
+      );
+    }
+
     const answer =
       submission.answers.find((a) => a.questionId === question.id)
       ?? submission.answers[index];
@@ -108,6 +119,21 @@ export default function SubmissionDetailModal({ submission, template, onClose, o
           <div className="italic text-sm text-foreground border-b border-accent/30 pb-1 inline-block">
             {answer.answerText}
           </div>
+        );
+      case "signature_draw":
+        if (answer.answerText?.startsWith("data:image/")) {
+          return (
+            <img
+              src={answer.answerText}
+              alt="Submitted signature"
+              className="max-h-44 rounded-lg border border-black/10 bg-white p-2"
+            />
+          );
+        }
+        return (
+          <p className="text-sm text-muted italic">
+            Signature image unavailable.
+          </p>
         );
       default:
         return <p className="text-sm text-foreground">{answer.answerText || "—"}</p>;

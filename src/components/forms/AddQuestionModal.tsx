@@ -3,7 +3,7 @@
 import { useState } from "react";
 import {
   X, Type, AlignLeft, Hash, SlidersHorizontal, ToggleLeft,
-  ListChecks, Ruler, Star, PenTool, Plus, Trash2,
+  ListChecks, Ruler, Star, PenTool, Plus, Trash2, Heading1,
 } from "lucide-react";
 import {
   FORM_QUESTION_TYPES, FormQuestionType, FormQuestion,
@@ -11,6 +11,7 @@ import {
 } from "@/lib/types";
 
 const ICON_MAP: Record<string, React.ElementType> = {
+  Heading1,
   Type, AlignLeft, Hash, SlidersHorizontal, ToggleLeft,
   ListChecks, Ruler, Star, PenTool,
 };
@@ -24,7 +25,11 @@ interface AddQuestionModalProps {
 export default function AddQuestionModal({ existingQuestion, onSave, onClose }: AddQuestionModalProps) {
   const [selectedType, setSelectedType] = useState<FormQuestionType>(existingQuestion?.questionType ?? "short_text");
   const [questionText, setQuestionText] = useState(existingQuestion?.questionText ?? "");
-  const [isRequired, setIsRequired] = useState(existingQuestion?.isRequired ?? true);
+  const [isRequired, setIsRequired] = useState(
+    existingQuestion?.questionType === "section_header"
+      ? false
+      : (existingQuestion?.isRequired ?? true)
+  );
   const [placeholder, setPlaceholder] = useState(existingQuestion?.placeholder ?? "");
 
   // Slider config
@@ -81,7 +86,7 @@ export default function AddQuestionModal({ existingQuestion, onSave, onClose }: 
       questionText,
       questionType: selectedType,
       sortOrder: existingQuestion?.sortOrder ?? 0,
-      isRequired,
+      isRequired: selectedType === "section_header" ? false : isRequired,
       choices: selectedType === "multiple_choice" ? choices : null,
       allowsMultipleSelection: selectedType === "multiple_choice" ? allowsMultiple : false,
       metricsConfig:
@@ -92,7 +97,7 @@ export default function AddQuestionModal({ existingQuestion, onSave, onClose }: 
       sliderMax: selectedType === "slider" ? sliderMax : null,
       sliderStep: selectedType === "slider" ? sliderStep : null,
       placeholder:
-        ["short_text", "long_text", "signature_caption"].includes(selectedType) && placeholder.trim()
+        ["short_text", "long_text", "signature_caption", "section_header"].includes(selectedType) && placeholder.trim()
           ? placeholder
           : null,
     };
@@ -144,12 +149,14 @@ export default function AddQuestionModal({ existingQuestion, onSave, onClose }: 
           <div className="flex-1 overflow-y-auto p-6 space-y-5">
             {/* Question text */}
             <div>
-              <label className="block text-sm font-medium text-muted mb-1.5">Question text</label>
+              <label className="block text-sm font-medium text-muted mb-1.5">
+                {selectedType === "section_header" ? "Section title" : "Question text"}
+              </label>
               <input
                 type="text"
                 value={questionText}
                 onChange={(e) => setQuestionText(e.target.value)}
-                placeholder="Enter your question..."
+                placeholder={selectedType === "section_header" ? "Enter section title..." : "Enter your question..."}
                 className="w-full px-4 py-2.5 rounded-lg bg-black/5 border border-black/10 text-foreground placeholder-muted/50 focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/25"
                 autoFocus
               />
@@ -158,30 +165,35 @@ export default function AddQuestionModal({ existingQuestion, onSave, onClose }: 
             {/* Required toggle */}
             <div className="flex items-center gap-3">
               <button
-                onClick={() => setIsRequired(!isRequired)}
+                onClick={() => selectedType !== "section_header" && setIsRequired(!isRequired)}
                 className={`relative w-10 h-5 rounded-full transition-colors ${
-                  isRequired ? "bg-accent" : "bg-black/15"
+                  (selectedType === "section_header" ? false : isRequired) ? "bg-accent" : "bg-black/15"
                 }`}
+                disabled={selectedType === "section_header"}
               >
                 <span
                   className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
-                    isRequired ? "left-5.5 translate-x-0" : "left-0.5"
+                    (selectedType === "section_header" ? false : isRequired) ? "left-5.5 translate-x-0" : "left-0.5"
                   }`}
-                  style={{ left: isRequired ? "22px" : "2px" }}
+                  style={{ left: (selectedType === "section_header" ? false : isRequired) ? "22px" : "2px" }}
                 />
               </button>
-              <span className="text-sm text-foreground">Required</span>
+              <span className="text-sm text-foreground">
+                {selectedType === "section_header" ? "Display only (not answerable)" : "Required"}
+              </span>
             </div>
 
             {/* Type-specific config */}
-            {(selectedType === "short_text" || selectedType === "long_text" || selectedType === "signature_caption") && (
+            {(selectedType === "short_text" || selectedType === "long_text" || selectedType === "signature_caption" || selectedType === "section_header") && (
               <div>
-                <label className="block text-sm font-medium text-muted mb-1.5">Placeholder text</label>
+                <label className="block text-sm font-medium text-muted mb-1.5">
+                  {selectedType === "section_header" ? "Body text (optional)" : "Placeholder text"}
+                </label>
                 <input
                   type="text"
                   value={placeholder}
                   onChange={(e) => setPlaceholder(e.target.value)}
-                  placeholder="Optional placeholder..."
+                  placeholder={selectedType === "section_header" ? "Add supporting text for this section..." : "Optional placeholder..."}
                   className="w-full px-4 py-2.5 rounded-lg bg-black/5 border border-black/10 text-foreground placeholder-muted/50 focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/25"
                 />
               </div>
@@ -305,12 +317,13 @@ export default function AddQuestionModal({ existingQuestion, onSave, onClose }: 
             )}
 
             {/* Minimal config types — informational note */}
-            {(selectedType === "number_scale" || selectedType === "star_rating" || selectedType === "yes_no") && (
+            {(selectedType === "number_scale" || selectedType === "star_rating" || selectedType === "yes_no" || selectedType === "signature_draw") && (
               <div className="p-4 rounded-lg bg-accent/5 border border-accent/15">
                 <p className="text-sm text-muted">
                   {selectedType === "number_scale" && "Displays a 1–10 numbered scale. No additional configuration needed."}
                   {selectedType === "star_rating" && "Displays a 1–5 star rating selector. No additional configuration needed."}
                   {selectedType === "yes_no" && "Displays a Yes / No toggle selector. No additional configuration needed."}
+                  {selectedType === "signature_draw" && "Displays a drawn-signature pad for clients. No additional configuration needed."}
                 </p>
               </div>
             )}

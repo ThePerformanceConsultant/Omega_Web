@@ -229,6 +229,7 @@ export interface Client {
 // ==========================================
 
 export const FORM_QUESTION_TYPES = [
+  "section_header",
   "short_text",
   "long_text",
   "number",
@@ -239,6 +240,7 @@ export const FORM_QUESTION_TYPES = [
   "multiple_choice",
   "metrics",
   "star_rating",
+  "signature_draw",
   "signature_caption",
 ] as const;
 
@@ -248,6 +250,7 @@ export const FORM_QUESTION_TYPE_META: Record<
   FormQuestionType,
   { label: string; description: string; icon: string }
 > = {
+  section_header:    { label: "Section Header",   description: "Display-only heading and helper text", icon: "Heading1" },
   short_text:        { label: "Short Text",       description: "Single-line text input",          icon: "Type" },
   long_text:         { label: "Long Text",        description: "Multi-line text area",            icon: "AlignLeft" },
   number:            { label: "Number",           description: "Numeric input",                   icon: "Hash" },
@@ -258,6 +261,7 @@ export const FORM_QUESTION_TYPE_META: Record<
   multiple_choice:   { label: "Multiple Choice",  description: "Select from a list of options",   icon: "ListChecks" },
   metrics:           { label: "Metrics",          description: "Body measurement input fields",   icon: "Ruler" },
   star_rating:       { label: "Star Rating",      description: "1–5 star rating",                 icon: "Star" },
+  signature_draw:    { label: "Drawn Signature",  description: "Drawn signature capture field",   icon: "PenTool" },
   signature_caption: { label: "Signature",        description: "Confirmation text input field",   icon: "PenTool" },
 };
 
@@ -350,6 +354,7 @@ export interface FormTemplate {
   assignedClientIds: string[];
   createdAt: string;
   displayDays: number | null;
+  autoAssignOnSignup: boolean;
 }
 
 export interface FormSubmission {
@@ -374,6 +379,7 @@ export interface FormAnswer {
 }
 
 export type CheckInHistoryStatus = "completed" | "missed" | "pending";
+export type CheckInTimelineTag = "upcoming" | "due" | "overdue" | "none";
 
 export interface ClientCheckInTemplate {
   id: number;
@@ -390,6 +396,7 @@ export interface ClientCheckInHistoryItem {
   dueDate: string | null;
   assignedAt: string;
   status: CheckInHistoryStatus;
+  timelineTag: CheckInTimelineTag;
   responseId: number | null;
   submittedAt: string | null;
   reviewed: boolean;

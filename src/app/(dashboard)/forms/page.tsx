@@ -52,6 +52,7 @@ export default function FormsPage() {
       assignedClientIds: [],
       createdAt: new Date().toISOString().split("T")[0],
       displayDays: null,
+      autoAssignOnSignup: false,
     };
     setShowCreateModal(false);
     try {

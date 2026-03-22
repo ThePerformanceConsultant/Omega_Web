@@ -1,15 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Check, CheckCircle2, CircleDot, Pencil, Plus, Star, Trash2, X } from "lucide-react";
+import { AlertCircle, Calendar, Check, CheckCircle2, CircleDot, Pencil, Plus, Star, Trash2, X } from "lucide-react";
 import {
+  CheckInTimelineTag,
   ClientCheckInHistoryItem,
   ClientCheckInTemplate,
   FORM_QUESTION_TYPE_META,
   FormAnswer,
   FormQuestion,
+  FormTemplate,
 } from "@/lib/types";
-import { fetchClientCheckInPanelData } from "@/lib/supabase/db";
+import {
+  createFormAssignment,
+  fetchClientCheckInPanelData,
+  fetchFormTemplatesWithQuestions,
+  isDuplicateFormAssignmentError,
+} from "@/lib/supabase/db";
 import { clientStore, useCoachNotes } from "@/lib/client-store";
 
 function formatDate(value: string | null): string {
@@ -35,7 +42,33 @@ function statusLabel(status: ClientCheckInHistoryItem["status"]): string {
   return "Pending";
 }
 
+function timelineClasses(tag: CheckInTimelineTag): string {
+  if (tag === "upcoming") return "bg-blue-500/12 text-blue-700";
+  if (tag === "due") return "bg-warning/15 text-warning";
+  if (tag === "overdue") return "bg-danger/10 text-danger";
+  return "";
+}
+
+function timelineLabel(tag: CheckInTimelineTag): string {
+  if (tag === "upcoming") return "Upcoming";
+  if (tag === "due") return "Due";
+  if (tag === "overdue") return "Overdue";
+  return "";
+}
+
 function renderAnswer(answer: FormAnswer | undefined, question: FormQuestion) {
+  if (question.questionType === "section_header") {
+    return (
+      <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2">
+        {question.placeholder ? (
+          <p className="text-sm text-muted whitespace-pre-wrap">{question.placeholder}</p>
+        ) : (
+          <p className="text-xs text-muted italic">Section header (display only)</p>
+        )}
+      </div>
+    );
+  }
+
   if (!answer) return <span className="text-muted text-sm italic">No answer</span>;
 
   switch (question.questionType) {
@@ -115,6 +148,17 @@ function renderAnswer(answer: FormAnswer | undefined, question: FormQuestion) {
           ))}
         </div>
       );
+    case "signature_draw":
+      if (answer.answerText?.startsWith("data:image/")) {
+        return (
+          <img
+            src={answer.answerText}
+            alt="Client signature"
+            className="max-h-40 rounded-lg border border-black/10 bg-white p-2"
+          />
+        );
+      }
+      return <span className="text-muted text-sm italic">Signature image unavailable</span>;
     default:
       return <p className="text-sm whitespace-pre-wrap">{answer.answerText || "—"}</p>;
   }
@@ -123,6 +167,7 @@ function renderAnswer(answer: FormAnswer | undefined, question: FormQuestion) {
 export function CheckinsPanel({ clientId }: { clientId: string }) {
   const notes = useCoachNotes(clientId);
   const [templates, setTemplates] = useState<ClientCheckInTemplate[]>([]);
+  const [allTemplates, setAllTemplates] = useState<ClientCheckInTemplate[]>([]);
   const [history, setHistory] = useState<ClientCheckInHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -131,16 +176,32 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
   const [noteDraft, setNoteDraft] = useState("");
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingNoteDraft, setEditingNoteDraft] = useState("");
+  const [showAssignFormModal, setShowAssignFormModal] = useState(false);
+  const [assignTemplateId, setAssignTemplateId] = useState<string>("");
+  const [assignDueDate, setAssignDueDate] = useState(new Date().toISOString().split("T")[0]);
+  const [assigning, setAssigning] = useState(false);
+  const [assignMessage, setAssignMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
   useEffect(() => {
     let mounted = true;
     setLoading(true);
     setError(null);
-    fetchClientCheckInPanelData(clientId)
-      .then((data) => {
+    Promise.all([
+      fetchClientCheckInPanelData(clientId),
+      fetchFormTemplatesWithQuestions(),
+    ])
+      .then(([panelData, templateData]) => {
         if (!mounted) return;
-        setTemplates(data.templates);
-        setHistory(data.history);
+        setTemplates(panelData.templates);
+        setHistory(panelData.history);
+        setAllTemplates(
+          (templateData as FormTemplate[]).map((template) => ({
+            id: template.id,
+            name: template.name,
+            formType: template.formType,
+            questions: template.questions,
+          }))
+        );
         setSelectedTemplateId("all");
       })
       .catch((err) => {
@@ -156,7 +217,12 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
     };
   }, [clientId]);
 
-  const templateById = useMemo(() => new Map(templates.map((t) => [t.id, t])), [templates]);
+  const templateById = useMemo(() => {
+    const map = new Map<number, ClientCheckInTemplate>();
+    for (const template of allTemplates) map.set(template.id, template);
+    for (const template of templates) map.set(template.id, template);
+    return map;
+  }, [allTemplates, templates]);
 
   const filteredHistory = useMemo(() => {
     if (selectedTemplateId === "all") return history;
@@ -192,6 +258,38 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
     const byId = answersByQuestionId.get(question.id);
     if (byId) return byId;
     return answersByOrder[index];
+  }
+
+  async function refreshPanelData() {
+    const data = await fetchClientCheckInPanelData(clientId);
+    setTemplates(data.templates);
+    setHistory(data.history);
+  }
+
+  async function handleAssignForm() {
+    const templateId = Number(assignTemplateId);
+    if (!templateId || !assignDueDate) {
+      setAssignMessage({ type: "error", text: "Please select a form and due date." });
+      return;
+    }
+
+    setAssigning(true);
+    setAssignMessage(null);
+    try {
+      await createFormAssignment(templateId, clientId, assignDueDate);
+      await refreshPanelData();
+      setAssignMessage({ type: "success", text: "Form assigned successfully." });
+      setShowAssignFormModal(false);
+      setAssignTemplateId("");
+    } catch (err) {
+      if (isDuplicateFormAssignmentError(err)) {
+        setAssignMessage({ type: "error", text: "That form is already assigned for the selected date." });
+      } else {
+        setAssignMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to assign form." });
+      }
+    } finally {
+      setAssigning(false);
+    }
   }
 
   function handleAddNote() {
@@ -230,7 +328,16 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
     <div className="space-y-5">
       <section className="space-y-2">
         <p className="text-xs text-muted">Review submitted check-ins alongside missed forms and keep review notes in one place.</p>
-        <label className="block text-xs font-medium text-muted">Form</label>
+        <div className="flex items-center justify-between gap-3">
+          <label className="block text-xs font-medium text-muted">Form</label>
+          <button
+            onClick={() => setShowAssignFormModal(true)}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-black/10 text-xs font-medium text-foreground hover:bg-black/[0.03]"
+          >
+            <Plus size={12} />
+            Assign Form
+          </button>
+        </div>
         <select
           value={selectedTemplateId}
           onChange={(e) => setSelectedTemplateId(e.target.value)}
@@ -243,6 +350,11 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
             </option>
           ))}
         </select>
+        {assignMessage && (
+          <p className={`text-xs ${assignMessage.type === "error" ? "text-danger" : "text-success"}`}>
+            {assignMessage.text}
+          </p>
+        )}
       </section>
 
       <section>
@@ -278,9 +390,16 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
                         {entry.submittedAt ? `Submitted ${formatDate(entry.submittedAt)}` : `Due ${formatDate(entry.dueDate)}`}
                       </p>
                     </div>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusClasses(entry.status)}`}>
-                      {statusLabel(entry.status)}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusClasses(entry.status)}`}>
+                        {statusLabel(entry.status)}
+                      </span>
+                      {entry.timelineTag !== "none" && (
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${timelineClasses(entry.timelineTag)}`}>
+                          {timelineLabel(entry.timelineTag)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </button>
               );
@@ -298,6 +417,11 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusClasses(selectedEntry.status)}`}>
                 {statusLabel(selectedEntry.status)}
               </span>
+              {selectedEntry.timelineTag !== "none" && (
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${timelineClasses(selectedEntry.timelineTag)}`}>
+                  {timelineLabel(selectedEntry.timelineTag)}
+                </span>
+              )}
               {selectedEntry.reviewed && (
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-success/15 text-success">Reviewed</span>
               )}
@@ -422,6 +546,72 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
           </button>
         </div>
       </section>
+
+      {showAssignFormModal && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-xl border border-black/10 bg-white shadow-xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-base font-semibold">Assign Form</h4>
+              <button
+                onClick={() => setShowAssignFormModal(false)}
+                className="text-muted hover:text-foreground"
+                aria-label="Close assign form modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-muted mb-1">Form Template</label>
+                <select
+                  value={assignTemplateId}
+                  onChange={(e) => setAssignTemplateId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-black/5 border border-black/10 text-sm"
+                >
+                  <option value="">Select a form</option>
+                  {allTemplates.map((template) => (
+                    <option key={template.id} value={String(template.id)}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-muted mb-1">
+                  <span className="inline-flex items-center gap-1">
+                    <Calendar size={12} />
+                    Due Date
+                  </span>
+                </label>
+                <input
+                  type="date"
+                  value={assignDueDate}
+                  onChange={(e) => setAssignDueDate(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-black/5 border border-black/10 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                onClick={() => setShowAssignFormModal(false)}
+                className="px-3 py-2 rounded-lg border border-black/10 text-sm hover:bg-black/[0.03]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleAssignForm()}
+                disabled={assigning}
+                className="px-3 py-2 rounded-lg bg-accent text-white text-sm hover:bg-accent-light disabled:opacity-60"
+              >
+                {assigning ? "Assigning..." : "Assign Form"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
