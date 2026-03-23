@@ -1,7 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
 import { CalendarDays, Flag } from "lucide-react";
-import { useClientRoadmap } from "@/lib/roadmap-store";
+import { roadmapStore, useClientRoadmap } from "@/lib/roadmap-store";
 import { derivePhaseBlocks, getCurrentWeek } from "./tabs/roadmap/roadmap-utils";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -9,6 +10,10 @@ const TOTAL_WEEKS = 52;
 
 export function RoadmapSection({ clientId }: { clientId: string }) {
   const roadmap = useClientRoadmap(clientId);
+
+  useEffect(() => {
+    roadmapStore.hydrate(clientId);
+  }, [clientId]);
 
   if (!roadmap) {
     return (

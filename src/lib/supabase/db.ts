@@ -2666,7 +2666,15 @@ export async function fetchActivitySessions(clientId: string): Promise<import("@
     .order("start_date", { ascending: false });
 
   if (error) throw error;
-  return (data ?? []).map((row: any) => ({
+  const isOuraSource = (row: any): boolean => {
+    const sourceName = String(row.source_name ?? "").toLowerCase();
+    const sourceBundleId = String(row.source_bundle_id ?? "").toLowerCase();
+    return sourceName.includes("oura") || sourceBundleId.includes("oura");
+  };
+
+  return (data ?? [])
+    .filter((row: any) => !isOuraSource(row))
+    .map((row: any) => ({
     id: String(row.id),
     clientId: row.client_id,
     activityType: row.activity_type,
@@ -2686,6 +2694,209 @@ export async function fetchActivitySessions(clientId: string): Promise<import("@
     sourceName: row.source_name ?? null,
     createdAt: row.created_at,
   }));
+}
+
+export async function fetchClientOverviewStats(clientId: string): Promise<{
+  compliancePct: number;
+  streakDays: number;
+  currentWeight: number | null;
+  currentPhase: string | null;
+}> {
+  const client = getClient();
+  const today = new Date();
+  const toYmd = (d: Date) => d.toISOString().slice(0, 10);
+  const recentStart = new Date(today);
+  recentStart.setDate(recentStart.getDate() - 90);
+  const recentStartYmd = toYmd(recentStart);
+  const last7Days = Array.from({ length: 7 }, (_, idx) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - idx);
+    return toYmd(d);
+  });
+
+  const [
+    profileResult,
+    programResult,
+    metricConfigResult,
+    foodLogsResult,
+    workoutLogsResult,
+    activitiesResult,
+  ] = await Promise.all([
+    client
+      .from("client_profiles")
+      .select("current_weight, current_phase, compliance_pct, streak_days")
+      .eq("id", clientId)
+      .maybeSingle(),
+    client
+      .from("client_program_assignments")
+      .select(`
+        start_date,
+        current_phase_id,
+        programs (
+          program_phases (
+            id,
+            name,
+            weeks,
+            sort_order
+          )
+        )
+      `)
+      .eq("client_id", clientId)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    client
+      .from("metric_configs")
+      .select("id, name, healthkit_key")
+      .eq("client_id", clientId),
+    client
+      .from("food_log_entries")
+      .select("date")
+      .eq("client_id", clientId)
+      .gte("date", recentStartYmd),
+    client
+      .from("workout_logs")
+      .select("date")
+      .eq("client_id", clientId)
+      .gte("date", recentStartYmd),
+    client
+      .from("activity_sessions")
+      .select("start_date, source_name, source_bundle_id")
+      .eq("client_id", clientId)
+      .gte("start_date", `${recentStartYmd}T00:00:00`),
+  ]);
+
+  if (profileResult.error) throw profileResult.error;
+  if (programResult.error) throw programResult.error;
+  if (metricConfigResult.error) throw metricConfigResult.error;
+  if (foodLogsResult.error) throw foodLogsResult.error;
+  if (workoutLogsResult.error) throw workoutLogsResult.error;
+  if (activitiesResult.error) throw activitiesResult.error;
+
+  const profile = profileResult.data;
+
+  const bodyMassMetricIds = (metricConfigResult.data ?? [])
+    .filter((m: any) => {
+      const key = String(m.healthkit_key ?? "").toLowerCase();
+      const name = String(m.name ?? "").toLowerCase();
+      return key === "bodymass" || name === "body mass";
+    })
+    .map((m: any) => Number(m.id))
+    .filter((id: number) => Number.isFinite(id));
+
+  let latestWeight: number | null = null;
+  if (bodyMassMetricIds.length > 0) {
+    const { data: weightRows, error: weightError } = await client
+      .from("metric_entries")
+      .select("value, date")
+      .in("metric_id", bodyMassMetricIds)
+      .order("date", { ascending: false })
+      .limit(1);
+    if (weightError) throw weightError;
+    const value = Number(weightRows?.[0]?.value);
+    if (Number.isFinite(value) && value > 0) {
+      latestWeight = value;
+    }
+  }
+
+  const isOuraSource = (row: any): boolean => {
+    const sourceName = String(row.source_name ?? "").toLowerCase();
+    const sourceBundleId = String(row.source_bundle_id ?? "").toLowerCase();
+    return sourceName.includes("oura") || sourceBundleId.includes("oura");
+  };
+  const toDayKey = (raw: string): string | null => {
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return null;
+    return toYmd(d);
+  };
+
+  const loggedDaySet = new Set<string>();
+  for (const row of foodLogsResult.data ?? []) {
+    const day = toDayKey(String((row as any).date));
+    if (day) loggedDaySet.add(day);
+  }
+  for (const row of workoutLogsResult.data ?? []) {
+    const day = toDayKey(String((row as any).date));
+    if (day) loggedDaySet.add(day);
+  }
+  for (const row of activitiesResult.data ?? []) {
+    if (isOuraSource(row)) continue;
+    const day = toDayKey(String((row as any).start_date));
+    if (day) loggedDaySet.add(day);
+  }
+
+  let streakDays = 0;
+  for (let offset = 0; offset < 365; offset++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - offset);
+    const key = toYmd(d);
+    if (!loggedDaySet.has(key)) break;
+    streakDays += 1;
+  }
+
+  const complianceDays = last7Days.filter((day) => loggedDaySet.has(day)).length;
+  const compliancePct = Math.round((complianceDays / 7) * 100);
+  const hasRecentLogs = loggedDaySet.size > 0;
+
+  let currentPhase: string | null = null;
+  const assignment = programResult.data as any;
+  const phaseRows = (assignment?.programs?.program_phases ?? []) as any[];
+  if (phaseRows.length > 0) {
+    const phases = [...phaseRows].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const explicitPhaseId = assignment?.current_phase_id != null ? Number(assignment.current_phase_id) : null;
+    if (explicitPhaseId != null) {
+      const explicitPhase = phases.find((p) => Number(p.id) === explicitPhaseId);
+      if (explicitPhase?.name) {
+        currentPhase = String(explicitPhase.name);
+      }
+    }
+
+    if (!currentPhase) {
+      const startDateRaw = String(assignment?.start_date ?? "");
+      const startDate = new Date(`${startDateRaw}T00:00:00`);
+      if (!Number.isNaN(startDate.getTime())) {
+        const elapsedDays = Math.max(
+          0,
+          Math.floor((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
+        );
+        const currentWeek = Math.floor(elapsedDays / 7) + 1;
+        let cumulativeWeeks = 0;
+        for (const phase of phases) {
+          cumulativeWeeks += Math.max(1, Number(phase.weeks ?? 1));
+          if (currentWeek <= cumulativeWeeks) {
+            currentPhase = String(phase.name ?? "");
+            break;
+          }
+        }
+        if (!currentPhase && phases.length > 0) {
+          currentPhase = String(phases[phases.length - 1].name ?? "");
+        }
+      }
+    }
+  }
+
+  return {
+    compliancePct: hasRecentLogs
+      ? (Number.isFinite(compliancePct) ? compliancePct : 0)
+      : Number(profile?.compliance_pct ?? 0),
+    streakDays: hasRecentLogs ? streakDays : Number(profile?.streak_days ?? 0),
+    currentWeight: latestWeight ?? (profile?.current_weight != null ? Number(profile.current_weight) : null),
+    currentPhase: currentPhase || (profile?.current_phase ?? null),
+  };
+}
+
+export async function deleteActivitySession(sessionId: string): Promise<void> {
+  const client = getClient();
+  const numericId = Number(sessionId);
+  if (!Number.isFinite(numericId) || numericId <= 0) {
+    throw new Error("Invalid activity session id.");
+  }
+  const { error } = await client
+    .from("activity_sessions")
+    .delete()
+    .eq("id", numericId);
+  if (error) throw error;
 }
 
 // ── Vault ──────────────────────────────────────────────

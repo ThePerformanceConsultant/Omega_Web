@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useId } from "react";
 import { Star, BarChart3, Target, CheckCircle2, XCircle, ListChecks, ChevronDown, ChevronRight, ChevronLeft, Settings2, Activity, Plus, Trash2, Heart, Clock, Flame, Zap } from "lucide-react";
-import { fetchWorkoutLogs, fetchClientTasks, fetchMetricConfigs, fetchMetricEntries, createMetricConfig, updateMetricConfig, deleteMetricConfig, fetchActivitySessions } from "@/lib/supabase/db";
+import { fetchWorkoutLogs, fetchClientTasks, fetchMetricConfigs, fetchMetricEntries, createMetricConfig, updateMetricConfig, deleteMetricConfig, fetchActivitySessions, deleteActivitySession } from "@/lib/supabase/db";
 import type { WorkoutLogEntry, Task, MetricConfig, MetricEntry, ActivitySession } from "@/lib/types";
 import { AVAILABLE_HEALTH_METRICS, HEALTH_METRIC_CATEGORIES } from "@/lib/types";
 import { WorkoutLogDetail } from "./workout-log-viewer";
@@ -141,8 +141,9 @@ function LineChart({
       {xIdxs.map((idx) => {
         const p = points[idx];
         if (!p) return null;
-        const d = new Date(data[idx].date);
-        const label = `${d.getDate()}/${d.getMonth() + 1}`;
+        const raw = data[idx].date;
+        const d = new Date(raw);
+        const label = Number.isNaN(d.getTime()) ? raw : `${d.getDate()}/${d.getMonth() + 1}`;
         return (
           <text
             key={`${idx}-${data[idx].date}`}
@@ -835,7 +836,15 @@ function formatDuration(seconds: number): string {
 // HR zone color mapping
 const ZONE_COLORS = ["#3b82f6", "#22c55e", "#eab308", "#f97316", "#ef4444"];
 
-function ActivitySessionsSection({ sessions }: { sessions: ActivitySession[] }) {
+function ActivitySessionsSection({
+  sessions,
+  deletingSessionId,
+  onDeleteSession,
+}: {
+  sessions: ActivitySession[];
+  deletingSessionId: string | null;
+  onDeleteSession: (sessionId: string) => void;
+}) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [periodDays, setPeriodDays] = useState(30);
 
@@ -845,6 +854,35 @@ function ActivitySessionsSection({ sessions }: { sessions: ActivitySession[] }) 
     cutoff.setDate(cutoff.getDate() - periodDays);
     return sessions.filter((s) => new Date(s.startDate) >= cutoff);
   }, [sessions, periodDays]);
+
+  const duplicateIds = useMemo(() => {
+    const ids = new Set<string>();
+    const sorted = [...filtered].sort(
+      (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
+    );
+    for (let i = 0; i < sorted.length; i++) {
+      const current = sorted[i];
+      const currentTs = new Date(current.startDate).getTime();
+      for (let j = i + 1; j < sorted.length; j++) {
+        const compare = sorted[j];
+        const compareTs = new Date(compare.startDate).getTime();
+        if (compareTs - currentTs > 2 * 60 * 1000) break;
+
+        const sameType = current.activityTypeRaw === compare.activityTypeRaw;
+        const durationClose = Math.abs(current.durationSeconds - compare.durationSeconds) <= 180;
+        const caloriesClose =
+          current.caloriesBurned == null ||
+          compare.caloriesBurned == null ||
+          Math.abs(current.caloriesBurned - compare.caloriesBurned) <= 120;
+
+        if (sameType && durationClose && caloriesClose) {
+          ids.add(current.id);
+          ids.add(compare.id);
+        }
+      }
+    }
+    return ids;
+  }, [filtered]);
 
   return (
     <div className="glass-card p-5">
@@ -865,6 +903,7 @@ function ActivitySessionsSection({ sessions }: { sessions: ActivitySession[] }) 
             const meta = getActivityMeta(s.activityTypeRaw);
             const isOpen = expandedId === s.id;
             const durationMin = Math.round(s.durationSeconds / 60);
+            const isPossibleDuplicate = duplicateIds.has(s.id);
             return (
               <div key={s.id} className="rounded-xl border border-black/5 overflow-hidden">
                 {/* Row */}
@@ -874,7 +913,14 @@ function ActivitySessionsSection({ sessions }: { sessions: ActivitySession[] }) 
                 >
                   <span className="text-xl">{meta.emoji}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold truncate">{s.activityType}</p>
+                    <p className="text-sm font-semibold truncate flex items-center gap-2">
+                      <span className="truncate">{s.activityType}</span>
+                      {isPossibleDuplicate && (
+                        <span className="shrink-0 rounded-full bg-warning/15 text-warning text-[10px] px-2 py-0.5 font-medium">
+                          Possible duplicate
+                        </span>
+                      )}
+                    </p>
                     <p className="text-[11px] text-muted">{formatActivityDate(s.startDate)}</p>
                   </div>
                   <div className="flex items-center gap-4 text-xs text-muted shrink-0">
@@ -997,6 +1043,17 @@ function ActivitySessionsSection({ sessions }: { sessions: ActivitySession[] }) 
                         Synced from Apple Health · {s.sourceName}
                       </p>
                     )}
+
+                    <div className="pt-2 border-t border-black/5">
+                      <button
+                        onClick={() => onDeleteSession(s.id)}
+                        disabled={deletingSessionId === s.id}
+                        className="inline-flex items-center gap-1.5 text-xs text-danger hover:opacity-80 disabled:opacity-60"
+                      >
+                        <Trash2 size={13} />
+                        {deletingSessionId === s.id ? "Deleting..." : "Delete session"}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1172,6 +1229,7 @@ export function ProgressTab({ clientId }: { clientId: string }) {
   // Activity sessions from HealthKit
   const [activitySessions, setActivitySessions] = useState<ActivitySession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [deletingActivityId, setDeletingActivityId] = useState<string | null>(null);
 
   // Metrics
   const [metricConfigs, setMetricConfigs] = useState<MetricConfig[]>([]);
@@ -1296,6 +1354,21 @@ export function ProgressTab({ clientId }: { clientId: string }) {
     () => allLogs.find((log) => log.id === selectedSessionId) ?? null,
     [allLogs, selectedSessionId],
   );
+
+  const handleDeleteActivity = useCallback(async (sessionId: string) => {
+    const confirmed = window.confirm("Delete this activity session for the client?");
+    if (!confirmed) return;
+    setDeletingActivityId(sessionId);
+    try {
+      await deleteActivitySession(sessionId);
+      setActivitySessions((prev) => prev.filter((s) => s.id !== sessionId));
+    } catch (err) {
+      console.error("Failed to delete activity session:", err);
+      window.alert("Could not delete this session. Please try again.");
+    } finally {
+      setDeletingActivityId(null);
+    }
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -1428,7 +1501,11 @@ export function ProgressTab({ clientId }: { clientId: string }) {
 
       {/* ─── Activity Sessions ─── */}
       {activitySessions.length > 0 && (
-        <ActivitySessionsSection sessions={activitySessions} />
+        <ActivitySessionsSection
+          sessions={activitySessions}
+          deletingSessionId={deletingActivityId}
+          onDeleteSession={handleDeleteActivity}
+        />
       )}
 
       {/* ─── Task History ─── */}
