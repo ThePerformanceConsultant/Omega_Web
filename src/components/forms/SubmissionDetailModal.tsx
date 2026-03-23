@@ -5,6 +5,7 @@ import Link from "next/link";
 import { X, Star, CheckCircle, XCircle, Utensils } from "lucide-react";
 import { FormSubmission, FormTemplate, FormQuestion, FORM_QUESTION_TYPE_META } from "@/lib/types";
 import { markSubmissionReviewed } from "@/lib/supabase/db";
+import { RichTextBlock } from "@/components/forms/RichTextBlock";
 
 interface SubmissionDetailModalProps {
   submission: FormSubmission;
@@ -31,13 +32,26 @@ export default function SubmissionDetailModal({ submission, template, onClose, o
     }
   }
 
+  function isLegacySectionHeaderQuestion(question: FormQuestion): boolean {
+    if (!(question.questionType === "short_text" || question.questionType === "long_text")) return false;
+    if (question.isRequired) return false;
+    const body = (question.placeholder ?? "").trim();
+    if (!body) return false;
+    const bodyLower = body.toLowerCase();
+    if (bodyLower.includes("your answer") || bodyLower.includes("type your answer")) return false;
+    return body.length >= 60;
+  }
+
   function renderAnswer(question: FormQuestion, index: number) {
-    if (question.questionType === "section_header") {
+    if (question.questionType === "section_header" || isLegacySectionHeaderQuestion(question)) {
       return (
         <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2">
-          <p className="text-xs font-semibold text-accent">Section Header</p>
+          <RichTextBlock
+            text={question.questionText}
+            className="text-sm font-semibold text-foreground [&_p]:mb-1"
+          />
           {question.placeholder && (
-            <p className="text-sm text-muted mt-1 whitespace-pre-wrap">{question.placeholder}</p>
+            <RichTextBlock text={question.placeholder} className="text-sm text-muted mt-1" />
           )}
         </div>
       );
@@ -47,6 +61,16 @@ export default function SubmissionDetailModal({ submission, template, onClose, o
       submission.answers.find((a) => a.questionId === question.id)
       ?? submission.answers[index];
     if (!answer) return <span className="text-muted text-sm italic">No answer</span>;
+
+    if (answer.answerText?.startsWith("data:image/")) {
+      return (
+        <img
+          src={answer.answerText}
+          alt="Submitted signature"
+          className="max-h-44 rounded-lg border border-black/10 bg-white p-2"
+        />
+      );
+    }
 
     switch (question.questionType) {
       case "star_rating":

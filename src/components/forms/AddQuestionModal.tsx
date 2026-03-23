@@ -50,6 +50,8 @@ export default function AddQuestionModal({ existingQuestion, onSave, onClose }: 
     ]
   );
 
+  const isSectionHeader = selectedType === "section_header";
+
   function addChoice() {
     setChoices((prev) => [...prev, { id: Date.now(), text: "", sortOrder: prev.length }]);
   }
@@ -150,16 +152,31 @@ export default function AddQuestionModal({ existingQuestion, onSave, onClose }: 
             {/* Question text */}
             <div>
               <label className="block text-sm font-medium text-muted mb-1.5">
-                {selectedType === "section_header" ? "Section title" : "Question text"}
+                {isSectionHeader ? "Section title / rich text" : "Question text"}
               </label>
-              <input
-                type="text"
-                value={questionText}
-                onChange={(e) => setQuestionText(e.target.value)}
-                placeholder={selectedType === "section_header" ? "Enter section title..." : "Enter your question..."}
-                className="w-full px-4 py-2.5 rounded-lg bg-black/5 border border-black/10 text-foreground placeholder-muted/50 focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/25"
-                autoFocus
-              />
+              {isSectionHeader ? (
+                <textarea
+                  value={questionText}
+                  onChange={(e) => setQuestionText(e.target.value)}
+                  placeholder="Enter section title (supports markdown, new lines, lists)..."
+                  className="w-full min-h-[88px] px-4 py-2.5 rounded-lg bg-black/5 border border-black/10 text-foreground placeholder-muted/50 focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/25 resize-y"
+                  autoFocus
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={questionText}
+                  onChange={(e) => setQuestionText(e.target.value)}
+                  placeholder="Enter your question..."
+                  className="w-full px-4 py-2.5 rounded-lg bg-black/5 border border-black/10 text-foreground placeholder-muted/50 focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/25"
+                  autoFocus
+                />
+              )}
+              {isSectionHeader && (
+                <p className="text-xs text-muted mt-1">
+                  Markdown supported: <code>**bold**</code>, <code>*italic*</code>, <code>- bullet</code>, <code>1. numbered</code>.
+                </p>
+              )}
             </div>
 
             {/* Required toggle */}
@@ -187,15 +204,24 @@ export default function AddQuestionModal({ existingQuestion, onSave, onClose }: 
             {(selectedType === "short_text" || selectedType === "long_text" || selectedType === "signature_caption" || selectedType === "section_header") && (
               <div>
                 <label className="block text-sm font-medium text-muted mb-1.5">
-                  {selectedType === "section_header" ? "Body text (optional)" : "Placeholder text"}
+                  {isSectionHeader ? "Body text (optional, markdown supported)" : "Placeholder text"}
                 </label>
-                <input
-                  type="text"
-                  value={placeholder}
-                  onChange={(e) => setPlaceholder(e.target.value)}
-                  placeholder={selectedType === "section_header" ? "Add supporting text for this section..." : "Optional placeholder..."}
-                  className="w-full px-4 py-2.5 rounded-lg bg-black/5 border border-black/10 text-foreground placeholder-muted/50 focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/25"
-                />
+                {isSectionHeader ? (
+                  <textarea
+                    value={placeholder}
+                    onChange={(e) => setPlaceholder(e.target.value)}
+                    placeholder="Add supporting text for this section..."
+                    className="w-full min-h-[132px] px-4 py-2.5 rounded-lg bg-black/5 border border-black/10 text-foreground placeholder-muted/50 focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/25 resize-y"
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    value={placeholder}
+                    onChange={(e) => setPlaceholder(e.target.value)}
+                    placeholder="Optional placeholder..."
+                    className="w-full px-4 py-2.5 rounded-lg bg-black/5 border border-black/10 text-foreground placeholder-muted/50 focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/25"
+                  />
+                )}
               </div>
             )}
 

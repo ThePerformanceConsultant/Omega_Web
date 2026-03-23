@@ -2,6 +2,7 @@
 
 import { Star, Check, X as XIcon } from "lucide-react";
 import { FormQuestion, FormTemplate, FORM_QUESTION_TYPE_META } from "@/lib/types";
+import { RichTextBlock } from "@/components/forms/RichTextBlock";
 
 interface MobilePreviewProps {
   template: FormTemplate;
@@ -68,11 +69,15 @@ function PreviewQuestion({ question, index }: { question: FormQuestion; index: n
     <div className={`rounded-xl border p-3 space-y-2 ${isSectionHeader ? "bg-accent/10 border-accent/30" : "bg-white/[0.06] border-white/[0.08]"}`}>
       {isSectionHeader ? (
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold text-white">
-            {question.questionText || "Section title"}
-          </p>
+          <RichTextBlock
+            text={question.questionText || "Section title"}
+            className="text-[11px] font-semibold text-white [&_p]:mb-1"
+          />
           {question.placeholder && (
-            <p className="text-[9px] text-white/70 leading-snug">{question.placeholder}</p>
+            <RichTextBlock
+              text={question.placeholder}
+              className="text-[9px] text-white/70 leading-snug"
+            />
           )}
           <span className="text-[8px] text-white/40 uppercase tracking-wider">{meta.label}</span>
         </div>

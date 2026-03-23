@@ -25,6 +25,7 @@ import { formStore } from "@/lib/form-store";
 import AddQuestionModal from "@/components/forms/AddQuestionModal";
 import AssignClientsModal from "@/components/forms/AssignClientsModal";
 import MobilePreview from "@/components/forms/MobilePreview";
+import { RichTextBlock } from "@/components/forms/RichTextBlock";
 
 interface ClientRow {
   id: string;
@@ -460,6 +461,7 @@ function SortableQuestionRow({
   };
 
   const meta = FORM_QUESTION_TYPE_META[question.questionType] ?? { label: question.questionType, description: "", icon: "HelpCircle" };
+  const isSectionHeader = question.questionType === "section_header";
 
   return (
     <div
@@ -473,9 +475,24 @@ function SortableQuestionRow({
       </button>
 
       {/* Question text */}
-      <div className="flex items-center gap-2 min-w-0">
+      <div className="flex items-start gap-2 min-w-0">
         <span className="text-xs font-bold text-accent">{index + 1}.</span>
-        <span className="text-sm text-foreground truncate">{question.questionText}</span>
+        {isSectionHeader ? (
+          <div className="space-y-1 min-w-0">
+            <RichTextBlock
+              text={question.questionText}
+              className="text-sm text-foreground font-semibold [&_p]:mb-1"
+            />
+            {question.placeholder && (
+              <RichTextBlock
+                text={question.placeholder}
+                className="text-xs text-muted"
+              />
+            )}
+          </div>
+        ) : (
+          <span className="text-sm text-foreground whitespace-pre-wrap break-words">{question.questionText}</span>
+        )}
       </div>
 
       {/* Type badge */}

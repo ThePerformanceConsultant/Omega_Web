@@ -261,8 +261,8 @@ export const FORM_QUESTION_TYPE_META: Record<
   multiple_choice:   { label: "Multiple Choice",  description: "Select from a list of options",   icon: "ListChecks" },
   metrics:           { label: "Metrics",          description: "Body measurement input fields",   icon: "Ruler" },
   star_rating:       { label: "Star Rating",      description: "1–5 star rating",                 icon: "Star" },
-  signature_draw:    { label: "Drawn Signature",  description: "Drawn signature capture field",   icon: "PenTool" },
-  signature_caption: { label: "Signature",        description: "Confirmation text input field",   icon: "PenTool" },
+  signature_draw:    { label: "Drawn Signature",        description: "Drawn signature capture field",   icon: "PenTool" },
+  signature_caption: { label: "Typed Signature (Legacy)", description: "Confirmation text input field",   icon: "PenTool" },
 };
 
 export const FORM_TYPE_OPTIONS = ["check_in", "custom", "review", "onboarding", "nutrition_intake"] as const;

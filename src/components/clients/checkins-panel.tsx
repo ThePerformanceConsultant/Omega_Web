@@ -18,6 +18,7 @@ import {
   isDuplicateFormAssignmentError,
 } from "@/lib/supabase/db";
 import { clientStore, useCoachNotes } from "@/lib/client-store";
+import { RichTextBlock } from "@/components/forms/RichTextBlock";
 
 function formatDate(value: string | null): string {
   if (!value) return "—";
@@ -56,12 +57,26 @@ function timelineLabel(tag: CheckInTimelineTag): string {
   return "";
 }
 
+function isLegacySectionHeaderQuestion(question: FormQuestion): boolean {
+  if (!(question.questionType === "short_text" || question.questionType === "long_text")) return false;
+  if (question.isRequired) return false;
+  const body = (question.placeholder ?? "").trim();
+  if (!body) return false;
+  const bodyLower = body.toLowerCase();
+  if (bodyLower.includes("your answer") || bodyLower.includes("type your answer")) return false;
+  return body.length >= 60;
+}
+
 function renderAnswer(answer: FormAnswer | undefined, question: FormQuestion) {
-  if (question.questionType === "section_header") {
+  if (question.questionType === "section_header" || isLegacySectionHeaderQuestion(question)) {
     return (
       <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2">
+        <RichTextBlock
+          text={question.questionText}
+          className="text-sm font-semibold text-foreground [&_p]:mb-1"
+        />
         {question.placeholder ? (
-          <p className="text-sm text-muted whitespace-pre-wrap">{question.placeholder}</p>
+          <RichTextBlock text={question.placeholder} className="text-sm text-muted" />
         ) : (
           <p className="text-xs text-muted italic">Section header (display only)</p>
         )}
@@ -70,6 +85,16 @@ function renderAnswer(answer: FormAnswer | undefined, question: FormQuestion) {
   }
 
   if (!answer) return <span className="text-muted text-sm italic">No answer</span>;
+
+  if (answer.answerText?.startsWith("data:image/")) {
+    return (
+      <img
+        src={answer.answerText}
+        alt="Client signature"
+        className="max-h-40 rounded-lg border border-black/10 bg-white p-2"
+      />
+    );
+  }
 
   switch (question.questionType) {
     case "star_rating":
