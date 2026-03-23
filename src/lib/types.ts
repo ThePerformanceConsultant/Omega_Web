@@ -424,6 +424,8 @@ export interface Message {
   senderId: string;
   senderRole: "coach" | "client";
   content: string;
+  imagePath?: string | null;
+  imageUrl?: string | null;
   sentAt: string;
   isRead: boolean;
 }

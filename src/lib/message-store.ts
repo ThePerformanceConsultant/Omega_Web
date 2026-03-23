@@ -10,6 +10,7 @@ import {
   markMessagesRead as dbMarkRead,
   createConversation as dbCreateConversation,
   fetchClients,
+  getMessageImageUrl,
   subscribeToMessages,
   subscribeToConversations,
 } from "./supabase/db";
@@ -60,15 +61,22 @@ function fromDbMessage(row: Record<string, unknown>, coachId: string): Message {
     conversationId: String(row.conversation_id),
     senderId: row.sender_id as string,
     senderRole: row.sender_id === coachId ? "coach" : "client",
-    content: row.content as string,
+    content: (row.content as string | null) ?? "",
+    imagePath: (row.image_path as string | null) ?? null,
+    imageUrl: (row.image_url as string | null) ?? null,
     sentAt: row.sent_at as string,
     isRead: (row.read as boolean) ?? false,
   };
 }
 
 function subscribeToConversation(conversationId: string) {
-  const channel = subscribeToMessages(conversationId, (newRow: Record<string, unknown>) => {
-    const msg = fromDbMessage(newRow, _coachId);
+  const channel = subscribeToMessages(conversationId, async (newRow: Record<string, unknown>) => {
+    const rowWithImage = { ...newRow };
+    const imagePath = (newRow.image_path as string | null) ?? null;
+    if (imagePath && !newRow.image_url) {
+      rowWithImage.image_url = await getMessageImageUrl(imagePath);
+    }
+    const msg = fromDbMessage(rowWithImage, _coachId);
     // Skip if this is our own message (already added optimistically)
     if (msg.senderRole === "coach") return;
     // Skip duplicates
@@ -80,7 +88,7 @@ function subscribeToConversation(conversationId: string) {
       c.id === conversationId
         ? {
             ...c,
-            lastMessage: msg.content,
+            lastMessage: messagePreview(msg.content, msg.imagePath),
             lastMessageAt: msg.sentAt,
             lastMessageSender: "client" as const,
             unreadCount: c.unreadCount + 1,
@@ -90,6 +98,13 @@ function subscribeToConversation(conversationId: string) {
     emitChange();
   });
   if (channel) channels.push(channel);
+}
+
+function messagePreview(content: string, imagePath?: string | null): string {
+  const text = content.trim();
+  if (text.length > 0) return text;
+  if (imagePath) return "📷 Image";
+  return "";
 }
 
 export const messageStore = {
@@ -208,9 +223,19 @@ export const messageStore = {
     }
   },
 
-  async sendMessage(conversationId: string, content: string, senderId: string) {
+  async sendMessage(
+    conversationId: string,
+    payload: { content: string; imagePath?: string | null; imageUrl?: string | null },
+    senderId: string
+  ) {
+    const content = payload.content.trim();
+    const imagePath = payload.imagePath ?? null;
+    const imageUrl = payload.imageUrl ?? null;
+    if (!content && !imagePath) return;
+
     const now = new Date().toISOString();
     const previousConversation = conversations.find((c) => c.id === conversationId) ?? null;
+    const preview = messagePreview(content, imagePath);
     // Optimistic local update
     const tempMsg: Message = {
       id: `temp-${Date.now()}`,
@@ -218,24 +243,27 @@ export const messageStore = {
       senderId,
       senderRole: "coach",
       content,
+      imagePath,
+      imageUrl,
       sentAt: now,
       isRead: true,
     };
     messages = [...messages, tempMsg];
     conversations = conversations.map((c) =>
       c.id === conversationId
-        ? { ...c, lastMessage: content, lastMessageAt: now, lastMessageSender: "coach" as const }
+        ? { ...c, lastMessage: preview, lastMessageAt: now, lastMessageSender: "coach" as const }
         : c
     );
     emitChange();
 
     // Persist to Supabase
     try {
-      const saved = await dbSendMessage({ conversationId, senderId, content });
+      const saved = await dbSendMessage({ conversationId, senderId, content, imagePath });
+      const savedMapped = fromDbMessage(saved as Record<string, unknown>, _coachId);
       // Replace temp message with real one
       messages = messages.map((m) =>
         m.id === tempMsg.id
-          ? { ...tempMsg, id: String(saved.id) }
+          ? savedMapped
           : m
       );
       emitChange();
@@ -282,7 +310,7 @@ export const messageStore = {
           if (!created) continue;
           conv = created;
         }
-        await this.sendMessage(conv.id, content, coachId);
+        await this.sendMessage(conv.id, { content }, coachId);
         sent++;
       } catch (err) {
         console.error(`[messageStore] broadcast to ${clientId} failed:`, err);

@@ -2,11 +2,11 @@
 
 import { Suspense, useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { Search, Send, MessageCircle, Plus, Megaphone, X, Check } from "lucide-react";
+import { Search, Send, MessageCircle, Plus, Megaphone, X, Check, ImagePlus } from "lucide-react";
 import { useConversations, useMessages, messageStore } from "@/lib/message-store";
 import { Conversation } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
-import { fetchClients } from "@/lib/supabase/db";
+import { fetchClients, uploadMessageImage } from "@/lib/supabase/db";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
 
 // ── Helpers ──
@@ -377,8 +377,13 @@ function ChatWindow({ conversationId, coachId }: { conversationId: string; coach
   const conversations = useConversations();
   const messages = useMessages(conversationId);
   const [draft, setDraft] = useState("");
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
+  const [attachmentPreview, setAttachmentPreview] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const conv = conversations.find((c) => c.id === conversationId);
 
@@ -413,18 +418,78 @@ function ChatWindow({ conversationId, coachId }: { conversationId: string; coach
     autoResize();
   }, [draft, autoResize]);
 
-  function handleSend() {
+  function clearAttachment() {
+    if (attachmentPreview?.startsWith("blob:")) {
+      URL.revokeObjectURL(attachmentPreview);
+    }
+    setAttachmentFile(null);
+    setAttachmentPreview(null);
+  }
+
+  function handleAttachmentChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setSendError("Please select an image file.");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setSendError("Image must be 8 MB or smaller.");
+      return;
+    }
+    clearAttachment();
+    setAttachmentFile(file);
+    setAttachmentPreview(URL.createObjectURL(file));
+    setSendError(null);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (attachmentPreview?.startsWith("blob:")) {
+        URL.revokeObjectURL(attachmentPreview);
+      }
+    };
+  }, [attachmentPreview]);
+
+  async function handleSend() {
     const text = draft.trim();
-    if (!text || !coachId) return;
-    messageStore.sendMessage(conversationId, text, coachId);
-    setDraft("");
-    textareaRef.current?.focus();
+    if ((!text && !attachmentFile) || !coachId || sending) return;
+
+    setSending(true);
+    setSendError(null);
+    try {
+      let uploadedPath: string | null = null;
+      let uploadedUrl: string | null = null;
+      if (attachmentFile) {
+        const uploaded = await uploadMessageImage({
+          conversationId,
+          senderId: coachId,
+          file: attachmentFile,
+        });
+        uploadedPath = uploaded.path;
+        uploadedUrl = uploaded.signedUrl;
+      }
+
+      await messageStore.sendMessage(
+        conversationId,
+        { content: text, imagePath: uploadedPath, imageUrl: uploadedUrl },
+        coachId
+      );
+      setDraft("");
+      clearAttachment();
+      textareaRef.current?.focus();
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Failed to send message.");
+    } finally {
+      setSending(false);
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      void handleSend();
     }
   }
 
@@ -483,7 +548,20 @@ function ChatWindow({ conversationId, coachId }: { conversationId: string; coach
                       : "bg-black/5 text-foreground rounded-bl-md"
                   }`}
                 >
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                  {msg.imageUrl ? (
+                    <a href={msg.imageUrl} target="_blank" rel="noopener noreferrer" className="block">
+                      <img
+                        src={msg.imageUrl}
+                        alt="Message attachment"
+                        className="rounded-xl mb-2 max-h-64 w-auto object-cover border border-black/10"
+                      />
+                    </a>
+                  ) : msg.imagePath ? (
+                    <p className={`text-xs mb-2 ${isCoach ? "text-white/80" : "text-muted"}`}>Image unavailable</p>
+                  ) : null}
+                  {msg.content.trim() ? (
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                  ) : null}
                   <p
                     className={`text-[10px] mt-1 ${
                       isCoach ? "text-white/60" : "text-muted"
@@ -500,8 +578,41 @@ function ChatWindow({ conversationId, coachId }: { conversationId: string; coach
 
       {/* Input bar */}
       <div className="px-6 py-3 border-t border-black/10 bg-white/50 shrink-0">
+        {attachmentPreview && (
+          <div className="mb-3 flex items-start gap-2">
+            <img
+              src={attachmentPreview}
+              alt="Attachment preview"
+              className="h-20 w-20 rounded-xl object-cover border border-black/10"
+            />
+            <button
+              onClick={clearAttachment}
+              className="px-2 py-1 rounded-lg text-xs border border-black/15 text-muted hover:text-foreground"
+            >
+              Remove image
+            </button>
+          </div>
+        )}
+        {sendError && (
+          <p className="mb-2 text-xs text-danger">{sendError}</p>
+        )}
         <div className="flex items-end gap-3">
           <EmojiPicker onSelect={handleEmojiInsert} />
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleAttachmentChange}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => imageInputRef.current?.click()}
+            className="w-9 h-9 rounded-full bg-black/5 text-muted flex items-center justify-center hover:text-foreground transition-colors shrink-0"
+            title="Attach image"
+          >
+            <ImagePlus size={16} />
+          </button>
           <textarea
             ref={textareaRef}
             placeholder="Type a message..."
@@ -512,8 +623,8 @@ function ChatWindow({ conversationId, coachId }: { conversationId: string; coach
             className="flex-1 px-4 py-2.5 rounded-2xl bg-black/5 border border-black/10 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/25 resize-none overflow-hidden"
           />
           <button
-            onClick={handleSend}
-            disabled={!draft.trim()}
+            onClick={() => void handleSend()}
+            disabled={sending || (!draft.trim() && !attachmentFile)}
             className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center hover:bg-accent-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
           >
             <Send size={16} />

@@ -44,6 +44,8 @@ const CATEGORY_NORMALIZATION: Record<string, string> = {
   "beans, peas, legumes": "Beans, Peas, Legumes",
 };
 
+const MESSAGE_MEDIA_BUCKET = "message-media";
+
 function isCategoryCodeLike(value: string): boolean {
   // Ignore short taxonomy/code-like labels such as "BC", "BJP", "CA".
   return /^[A-Z0-9]{1,4}$/.test(value.trim());
@@ -1424,7 +1426,33 @@ export async function fetchMessages(conversationId: string) {
     .eq("conversation_id", conversationId)
     .order("sent_at", { ascending: true });
   if (error) throw error;
-  return data;
+
+  const rows = data ?? [];
+  const paths = Array.from(
+    new Set(
+      rows
+        .map((row) => (row.image_path as string | null) ?? null)
+        .filter((path): path is string => !!path)
+    )
+  );
+
+  let signedByPath = new Map<string, string>();
+  if (paths.length > 0) {
+    const { data: signedRows, error: signError } = await client.storage
+      .from(MESSAGE_MEDIA_BUCKET)
+      .createSignedUrls(paths, 3600);
+    if (signError) throw signError;
+    signedByPath = new Map(
+      (signedRows ?? [])
+        .filter((row) => !row.error && !!row.path && !!row.signedUrl)
+        .map((row) => [row.path as string, row.signedUrl as string])
+    );
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    image_url: row.image_path ? signedByPath.get(row.image_path as string) ?? null : null,
+  }));
 }
 
 export async function createConversation(coachId: string, clientId: string) {
@@ -1447,7 +1475,19 @@ export async function createConversation(coachId: string, clientId: string) {
   return data;
 }
 
-export async function sendMessage(msg: { conversationId: string; senderId: string; content: string }) {
+function buildMessagePreview(content: string, imagePath?: string | null): string {
+  const text = content.trim();
+  if (text.length > 0) return text;
+  if (imagePath) return "📷 Image";
+  return "";
+}
+
+export async function sendMessage(msg: {
+  conversationId: string;
+  senderId: string;
+  content: string;
+  imagePath?: string | null;
+}) {
   const client = getClient();
   const now = new Date().toISOString();
   const conversationId = Number(msg.conversationId);
@@ -1455,14 +1495,22 @@ export async function sendMessage(msg: { conversationId: string; senderId: strin
     throw new Error("Invalid conversation id.");
   }
 
+  const preview = buildMessagePreview(msg.content, msg.imagePath);
+
   const { data, error } = await client.from("messages").insert({
     conversation_id: Number(msg.conversationId),
     sender_id: msg.senderId,
     content: msg.content,
+    image_path: msg.imagePath ?? null,
     sent_at: now,
     read: false,
   }).select().single();
   if (error) throw error;
+
+  let imageUrl: string | null = null;
+  if ((data.image_path as string | null) != null) {
+    imageUrl = await getMessageImageUrl(data.image_path as string);
+  }
 
   // Fetch current unread counters + coach id to increment the recipient's unread count.
   const { data: convRow, error: convError } = await client
@@ -1480,7 +1528,7 @@ export async function sendMessage(msg: { conversationId: string; senderId: strin
 
   // Update conversation metadata + unread + last sender
   const { error: updateError } = await client.from("conversations").update({
-    last_message_preview: msg.content,
+    last_message_preview: preview,
     last_message_at: now,
     last_sender_id: msg.senderId,
     coach_unread: nextCoachUnread,
@@ -1488,7 +1536,10 @@ export async function sendMessage(msg: { conversationId: string; senderId: strin
   }).eq("id", conversationId);
   if (updateError) throw updateError;
 
-  return data;
+  return {
+    ...data,
+    image_url: imageUrl,
+  };
 }
 
 export async function markMessagesRead(conversationId: string, role: "coach" | "client") {
@@ -1498,6 +1549,169 @@ export async function markMessagesRead(conversationId: string, role: "coach" | "
   await client.from("messages").update({ read: true })
     .eq("conversation_id", Number(conversationId))
     .eq("read", false);
+}
+
+export type CoachAnalyticsSnapshot = {
+  totalClients: number;
+  activeClientsLast7Days: number;
+  unreadMessages: number;
+  pendingForms: number;
+  dueTodayForms: number;
+  upcomingForms: number;
+  overdueForms: number;
+  completedWorkoutsLast7Days: number;
+  foodEntriesLast7Days: number;
+  windowStart: string;
+  windowEnd: string;
+};
+
+export async function fetchCoachAnalyticsSnapshot(): Promise<CoachAnalyticsSnapshot | null> {
+  if (!isSupabaseConfigured()) return null;
+
+  const coachId = await getCoachId();
+  if (!coachId) return null;
+
+  const client = getClient();
+  const now = new Date();
+  const windowEnd = now.toISOString().slice(0, 10);
+  const windowStartDate = new Date(now);
+  windowStartDate.setDate(windowStartDate.getDate() - 6);
+  const windowStart = windowStartDate.toISOString().slice(0, 10);
+
+  const { data: clientRows, error: clientError } = await client
+    .from("client_profiles")
+    .select("id")
+    .eq("coach_id", coachId);
+  if (clientError) throw clientError;
+
+  const clientIds = (clientRows ?? []).map((row) => row.id as string);
+  const totalClients = clientIds.length;
+
+  const { data: conversationsRows, error: convError } = await client
+    .from("conversations")
+    .select("coach_unread")
+    .eq("coach_id", coachId);
+  if (convError) throw convError;
+  const unreadMessages = (conversationsRows ?? []).reduce(
+    (sum, row) => sum + Number(row.coach_unread ?? 0),
+    0
+  );
+
+  const { data: assignmentRows, error: assignmentError } = await client
+    .from("form_assignments")
+    .select("status,due_date,form_templates!inner(coach_id)")
+    .eq("form_templates.coach_id", coachId);
+  if (assignmentError) throw assignmentError;
+
+  let pendingForms = 0;
+  let dueTodayForms = 0;
+  let upcomingForms = 0;
+  let overdueForms = 0;
+  for (const row of assignmentRows ?? []) {
+    const status = String(row.status ?? "");
+    if (status !== "pending") continue;
+    pendingForms += 1;
+    const due = String(row.due_date ?? "");
+    if (!due) continue;
+    if (due < windowEnd) {
+      overdueForms += 1;
+    } else if (due === windowEnd) {
+      dueTodayForms += 1;
+    } else if (due <= new Date(now.getTime() + 3 * 86_400_000).toISOString().slice(0, 10)) {
+      upcomingForms += 1;
+    }
+  }
+
+  let completedWorkoutsLast7Days = 0;
+  let foodEntriesLast7Days = 0;
+  let activeClientsLast7Days = 0;
+
+  if (clientIds.length > 0) {
+    const [{ data: workoutRows, error: workoutError }, { data: nutritionRows, error: nutritionError }] = await Promise.all([
+      client
+        .from("workout_logs")
+        .select("client_id,completed,date")
+        .in("client_id", clientIds)
+        .gte("date", windowStart)
+        .lte("date", windowEnd),
+      client
+        .from("food_log_entries")
+        .select("client_id,date")
+        .in("client_id", clientIds)
+        .gte("date", windowStart)
+        .lte("date", windowEnd),
+    ]);
+
+    if (workoutError) throw workoutError;
+    if (nutritionError) throw nutritionError;
+
+    const workoutRowsSafe = workoutRows ?? [];
+    const nutritionRowsSafe = nutritionRows ?? [];
+    completedWorkoutsLast7Days = workoutRowsSafe.filter((row) => Boolean(row.completed)).length;
+    foodEntriesLast7Days = nutritionRowsSafe.length;
+
+    const activeClientSet = new Set<string>();
+    for (const row of workoutRowsSafe) {
+      if (row.client_id) activeClientSet.add(String(row.client_id));
+    }
+    for (const row of nutritionRowsSafe) {
+      if (row.client_id) activeClientSet.add(String(row.client_id));
+    }
+    activeClientsLast7Days = activeClientSet.size;
+  }
+
+  return {
+    totalClients,
+    activeClientsLast7Days,
+    unreadMessages,
+    pendingForms,
+    dueTodayForms,
+    upcomingForms,
+    overdueForms,
+    completedWorkoutsLast7Days,
+    foodEntriesLast7Days,
+    windowStart,
+    windowEnd,
+  };
+}
+
+export async function getMessageImageUrl(path: string): Promise<string | null> {
+  const client = getClient();
+  const { data, error } = await client.storage
+    .from(MESSAGE_MEDIA_BUCKET)
+    .createSignedUrl(path, 3600);
+  if (error) {
+    console.warn("[messages] createSignedUrl failed:", error);
+    return null;
+  }
+  return data.signedUrl;
+}
+
+export async function uploadMessageImage(params: {
+  conversationId: string;
+  senderId: string;
+  file: File;
+}): Promise<{ path: string; signedUrl: string | null }> {
+  const client = getClient();
+  const { conversationId, senderId, file } = params;
+
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Only image attachments are supported.");
+  }
+
+  const extFromName = file.name.split(".").pop()?.toLowerCase();
+  const extFromType = file.type.split("/")[1]?.toLowerCase();
+  const ext = (extFromName || extFromType || "jpg").replace(/[^a-z0-9]/g, "");
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const path = `${conversationId}/${senderId}/${Date.now()}-${safeName || `upload.${ext}`}`;
+
+  const { error } = await client.storage
+    .from(MESSAGE_MEDIA_BUCKET)
+    .upload(path, file, { contentType: file.type, upsert: false });
+  if (error) throw error;
+
+  const signedUrl = await getMessageImageUrl(path);
+  return { path, signedUrl };
 }
 
 // ── Client Tasks ─────────────────────────────────────────
