@@ -21,6 +21,7 @@ import {
   GripVertical,
   ChevronDown,
   Check,
+  Plus,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 // Link removed — back button now uses router
@@ -59,6 +60,7 @@ import { MealPlanDrawer } from "./meal-plan-drawer";
 import { RecipeDetailPanel } from "./recipe-detail-panel";
 import { MicronutrientCollapsible } from "./micronutrient-collapsible";
 import { CreateIngredientModal } from "@/components/ingredients/create-ingredient-modal";
+import { RecipeEditorModal } from "@/components/recipes/recipe-editor-modal";
 
 interface MealPlanBuilderProps {
   plan: MealPlanTemplate;
@@ -123,6 +125,7 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
   const [isRemoteIngredientLoading, setIsRemoteIngredientLoading] = useState(false);
   const [showCreateIngredient, setShowCreateIngredient] = useState(false);
   const [isCreatingIngredient, setIsCreatingIngredient] = useState(false);
+  const [showCreateRecipe, setShowCreateRecipe] = useState(false);
 
   const supabaseEnabled = isSupabaseConfigured();
 
@@ -397,6 +400,11 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
     }
   }
 
+  function handleCreateRecipe(recipe: Recipe) {
+    recipeStore.add(recipe);
+    setShowCreateRecipe(false);
+  }
+
   // ── Day totals (uses active option per slot) ───────────────────────────
 
   const dayTotals = useMemo(() => {
@@ -527,6 +535,12 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none"
                   />
                 </div>
+                <button
+                  onClick={() => setShowCreateRecipe(true)}
+                  className="w-full px-3 py-1.5 rounded-lg border border-accent/30 bg-accent/5 text-accent text-xs font-medium hover:bg-accent/10 transition-colors inline-flex items-center justify-center gap-1.5"
+                >
+                  <Plus size={12} /> Create Recipe
+                </button>
                 {supabaseEnabled && (
                   <button
                     onClick={() => setShowCreateIngredient(true)}
@@ -883,6 +897,14 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
             submitting={isCreatingIngredient}
             onClose={() => setShowCreateIngredient(false)}
             onCreate={handleCreateIngredient}
+          />
+        )}
+
+        {showCreateRecipe && (
+          <RecipeEditorModal
+            recipe={null}
+            onSave={handleCreateRecipe}
+            onClose={() => setShowCreateRecipe(false)}
           />
         )}
       </div>
