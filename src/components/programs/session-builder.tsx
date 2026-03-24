@@ -14,6 +14,7 @@ import {
   LayoutGrid,
   Rows3,
   X,
+  ChevronDown,
 } from "lucide-react";
 import {
   ProgramWithPhases,
@@ -98,6 +99,12 @@ export function SessionBuilder({
     position: "before" | "after";
   } | null>(null);
   const [dropWorkoutTailColumn, setDropWorkoutTailColumn] = useState<PlannerColumnKey | null>(null);
+  const [expandedPlannerWorkoutIds, setExpandedPlannerWorkoutIds] = useState<Record<number, boolean>>({});
+  const [dragPlannerExercise, setDragPlannerExercise] = useState<{
+    sourceWorkoutId: number;
+    sourceExerciseId: number;
+  } | null>(null);
+  const [dropPlannerExerciseWorkoutId, setDropPlannerExerciseWorkoutId] = useState<number | null>(null);
   const [showExMenu, setShowExMenu] = useState<number | null>(null);
   const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
   const [isExEditorOpen, setIsExEditorOpen] = useState(false);
@@ -223,6 +230,22 @@ export function SessionBuilder({
       setWorkoutIdx(workoutCount - 1);
     }
   }, [workoutCount, workoutIdx]);
+
+  useEffect(() => {
+    if (!phase) {
+      setExpandedPlannerWorkoutIds({});
+      return;
+    }
+    setExpandedPlannerWorkoutIds((prev) => {
+      const next: Record<number, boolean> = {};
+      for (const entry of phase.workouts) {
+        if (prev[entry.id]) {
+          next[entry.id] = true;
+        }
+      }
+      return next;
+    });
+  }, [phase]);
 
   // ─── Mutation helpers ───
 
@@ -583,6 +606,78 @@ export function SessionBuilder({
     }
     onProgramChange((p) => {
       p.phases[phaseIdx].workouts[targetWorkoutIdx].scheduled_weekday = scheduledWeekday;
+    });
+  };
+
+  const togglePlannerWorkoutExpanded = (workoutId: number) => {
+    setExpandedPlannerWorkoutIds((prev) => ({
+      ...prev,
+      [workoutId]: !prev[workoutId],
+    }));
+  };
+
+  const expandAllPlannerWorkouts = () => {
+    if (!phase) return;
+    const next: Record<number, boolean> = {};
+    for (const entry of phase.workouts) {
+      next[entry.id] = true;
+    }
+    setExpandedPlannerWorkoutIds(next);
+  };
+
+  const collapseAllPlannerWorkouts = () => {
+    setExpandedPlannerWorkoutIds({});
+  };
+
+  const resetPlannerExerciseDragState = () => {
+    setDragPlannerExercise(null);
+    setDropPlannerExerciseWorkoutId(null);
+  };
+
+  const movePlannerExerciseBetweenWorkouts = (
+    sourceWorkoutId: number,
+    sourceExerciseId: number,
+    targetWorkoutId: number
+  ) => {
+    if (sourceWorkoutId === targetWorkoutId) return;
+    onProgramChange((p) => {
+      const workouts = p.phases[phaseIdx].workouts;
+      const sourceWorkout = workouts.find((entry) => entry.id === sourceWorkoutId);
+      const targetWorkout = workouts.find((entry) => entry.id === targetWorkoutId);
+      if (!sourceWorkout || !targetWorkout) return;
+
+      const sourceExerciseIndex = sourceWorkout.exercises.findIndex((entry) => entry.id === sourceExerciseId);
+      if (sourceExerciseIndex < 0) return;
+
+      const [movingExercise] = sourceWorkout.exercises.splice(sourceExerciseIndex, 1);
+      const sourceSectionName =
+        typeof movingExercise.section_index === "number" && movingExercise.section_index >= 0
+          ? sourceWorkout.workout_sections[movingExercise.section_index]?.name?.trim().toLowerCase() ?? ""
+          : "";
+      const matchedTargetSectionIndex =
+        sourceSectionName.length > 0
+          ? targetWorkout.workout_sections.findIndex(
+              (section) => section.name.trim().toLowerCase() === sourceSectionName
+            )
+          : -1;
+
+      movingExercise.workout_id = targetWorkout.id;
+      movingExercise.section_index =
+        matchedTargetSectionIndex >= 0
+          ? matchedTargetSectionIndex
+          : targetWorkout.workout_sections.length > 0
+          ? 0
+          : -1;
+      movingExercise.sort_order = targetWorkout.exercises.length;
+
+      targetWorkout.exercises.push(movingExercise);
+
+      sourceWorkout.exercises.forEach((exercise, index) => {
+        exercise.sort_order = index;
+      });
+      targetWorkout.exercises.forEach((exercise, index) => {
+        exercise.sort_order = index;
+      });
     });
   };
 
@@ -1601,6 +1696,24 @@ export function SessionBuilder({
                 Drag session cards between days to update the recommended day and order.
               </span>
               <div className="flex-1" />
+              {(phase?.workouts.length ?? 0) > 0 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={expandAllPlannerWorkouts}
+                    className="px-2.5 py-1.5 rounded-lg bg-white/8 text-white/75 hover:text-white text-xs transition-colors"
+                  >
+                    Expand all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={collapseAllPlannerWorkouts}
+                    className="px-2.5 py-1.5 rounded-lg bg-white/8 text-white/75 hover:text-white text-xs transition-colors"
+                  >
+                    Collapse all
+                  </button>
+                </div>
+              )}
               {editing && (
                 <button
                   type="button"
@@ -1628,13 +1741,13 @@ export function SessionBuilder({
                           <div
                             className="flex-1 min-h-0 overflow-y-auto px-1.5 py-1.5 space-y-1.5"
                             onDragOver={(event) => {
-                              if (!editing || dragWorkoutIdx === null) return;
+                              if (!editing || dragWorkoutIdx === null || dragPlannerExercise) return;
                               event.preventDefault();
                               setDropWorkoutTarget(null);
                               setDropWorkoutTailColumn(column.key);
                             }}
                             onDrop={(event) => {
-                              if (!editing || dragWorkoutIdx === null) return;
+                              if (!editing || dragWorkoutIdx === null || dragPlannerExercise) return;
                               event.preventDefault();
                               const fallbackInsert = column.entries.length;
                               moveWorkoutCard(dragWorkoutIdx, column.key, fallbackInsert);
@@ -1646,6 +1759,10 @@ export function SessionBuilder({
                               const exerciseCount = entry.workout.exercises.length;
                               const setCount = entry.workout.exercises.reduce((sum, exercise) => sum + (exercise.set_data?.length ?? 0), 0);
                               const isSelected = plannerEditorOpen && workoutIdx === entry.workoutIndex;
+                              const isExpanded = Boolean(expandedPlannerWorkoutIds[entry.workout.id]);
+                              const isExerciseDropTarget =
+                                dragPlannerExercise !== null &&
+                                dropPlannerExerciseWorkoutId === entry.workout.id;
                               const isDropBefore =
                                 dropWorkoutTarget?.columnKey === column.key &&
                                 dropWorkoutTarget.anchorWorkoutIndex === entry.workoutIndex &&
@@ -1654,21 +1771,38 @@ export function SessionBuilder({
                                 dropWorkoutTarget?.columnKey === column.key &&
                                 dropWorkoutTarget.anchorWorkoutIndex === entry.workoutIndex &&
                                 dropWorkoutTarget.position === "after";
+                              const sectionPreviews = entry.workout.workout_sections.map((section, sectionIndex) => ({
+                                id: section.id,
+                                name: section.name,
+                                exercises: entry.workout.exercises.filter((exercise) => exercise.section_index === sectionIndex),
+                              }));
+                              const unsectionedExercises = entry.workout.exercises.filter((exercise) => exercise.section_index === -1);
 
                               return (
                                 <div
                                   key={entry.workout.id}
-                                  draggable={editing}
+                                  draggable={editing && dragPlannerExercise === null}
                                   onDragStart={(event) => {
-                                    if (!editing) return;
+                                    if (!editing || dragPlannerExercise !== null) return;
                                     event.dataTransfer.effectAllowed = "move";
                                     setDragWorkoutIdx(entry.workoutIndex);
                                     setDropWorkoutTarget(null);
                                     setDropWorkoutTailColumn(null);
                                   }}
-                                  onDragEnd={resetWorkoutDragState}
+                                  onDragEnd={() => {
+                                    if (dragWorkoutIdx !== null) {
+                                      resetWorkoutDragState();
+                                    }
+                                  }}
                                   onDragOver={(event) => {
-                                    if (!editing || dragWorkoutIdx === null) return;
+                                    if (!editing) return;
+                                    if (dragPlannerExercise !== null) {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      setDropPlannerExerciseWorkoutId(entry.workout.id);
+                                      return;
+                                    }
+                                    if (dragWorkoutIdx === null) return;
                                     event.preventDefault();
                                     event.stopPropagation();
                                     const rect = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
@@ -1682,10 +1816,29 @@ export function SessionBuilder({
                                       position,
                                     });
                                   }}
+                                  onDragLeave={(event) => {
+                                    if (dragPlannerExercise === null) return;
+                                    if ((event.currentTarget as HTMLDivElement).contains(event.relatedTarget as Node)) {
+                                      return;
+                                    }
+                                    if (dropPlannerExerciseWorkoutId === entry.workout.id) {
+                                      setDropPlannerExerciseWorkoutId(null);
+                                    }
+                                  }}
                                   onDrop={(event) => {
-                                    if (!editing || dragWorkoutIdx === null) return;
+                                    if (!editing) return;
                                     event.preventDefault();
                                     event.stopPropagation();
+                                    if (dragPlannerExercise !== null) {
+                                      movePlannerExerciseBetweenWorkouts(
+                                        dragPlannerExercise.sourceWorkoutId,
+                                        dragPlannerExercise.sourceExerciseId,
+                                        entry.workout.id
+                                      );
+                                      resetPlannerExerciseDragState();
+                                      return;
+                                    }
+                                    if (dragWorkoutIdx === null) return;
                                     const insertIndex =
                                       dropWorkoutTarget?.columnKey === column.key &&
                                       dropWorkoutTarget.anchorWorkoutIndex === entry.workoutIndex
@@ -1694,7 +1847,13 @@ export function SessionBuilder({
                                     moveWorkoutCard(dragWorkoutIdx, column.key, insertIndex);
                                     resetWorkoutDragState();
                                   }}
-                                  className={`relative rounded-md border transition-colors ${isSelected ? "border-accent/40 bg-accent/[0.08]" : "border-black/[0.08] bg-white"} ${
+                                  className={`relative rounded-md border transition-colors ${
+                                    isExerciseDropTarget
+                                      ? "border-accent/45 bg-accent/[0.10]"
+                                      : isSelected
+                                      ? "border-accent/40 bg-accent/[0.08]"
+                                      : "border-black/[0.08] bg-white"
+                                  } ${
                                     dragWorkoutIdx === entry.workoutIndex ? "opacity-70" : ""
                                   }`}
                                 >
@@ -1704,33 +1863,140 @@ export function SessionBuilder({
                                   {isDropAfter && (
                                     <div className="absolute -bottom-1 left-1 right-1 h-2 rounded bg-accent/20 border border-accent/30 pointer-events-none" />
                                   )}
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setWorkoutIdx(entry.workoutIndex);
-                                      setPlannerEditorOpen(true);
-                                    }}
-                                    className="w-full text-left p-2"
-                                  >
-                                    <p className="text-xs font-semibold text-foreground truncate">{entry.workout.name}</p>
-                                    <p className="text-[10px] text-muted mt-1">
-                                      {sectionCount} section{sectionCount === 1 ? "" : "s"} · {exerciseCount} exercise{exerciseCount === 1 ? "" : "s"}
-                                    </p>
-                                    <p className="text-[10px] text-muted">{setCount} set{setCount === 1 ? "" : "s"}</p>
-                                  </button>
-                                  {editing && (
-                                    <button
+                                  <div className="p-2">
+                                    <div className="flex items-start gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setWorkoutIdx(entry.workoutIndex);
+                                          setPlannerEditorOpen(true);
+                                        }}
+                                        className="min-w-0 flex-1 text-left"
+                                      >
+                                        <p className="text-xs font-semibold text-foreground truncate">{entry.workout.name}</p>
+                                        <p className="text-[10px] text-muted mt-1">
+                                          {sectionCount} section{sectionCount === 1 ? "" : "s"} · {exerciseCount} exercise{exerciseCount === 1 ? "" : "s"}
+                                        </p>
+                                        <p className="text-[10px] text-muted">{setCount} set{setCount === 1 ? "" : "s"}</p>
+                                      </button>
+                                      <button
                                       type="button"
                                       onClick={(event) => {
                                         event.stopPropagation();
-                                        removeWorkout(entry.workoutIndex);
+                                        togglePlannerWorkoutExpanded(entry.workout.id);
                                       }}
-                                      className="absolute top-1.5 right-1.5 p-1 rounded text-muted hover:text-red-600 hover:bg-red-50 transition-colors"
-                                      title="Delete session"
+                                      className="mt-0.5 p-1 rounded text-muted hover:text-foreground hover:bg-black/5 transition-colors"
+                                      title={isExpanded ? "Collapse session" : "Expand session"}
                                     >
-                                      <Trash2 size={11} />
+                                      <ChevronDown
+                                        size={12}
+                                        className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                                      />
                                     </button>
-                                  )}
+                                      {editing && (
+                                        <button
+                                          type="button"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            removeWorkout(entry.workoutIndex);
+                                          }}
+                                          className="mt-0.5 p-1 rounded text-muted hover:text-red-600 hover:bg-red-50 transition-colors"
+                                          title="Delete session"
+                                        >
+                                          <Trash2 size={11} />
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {isExpanded && (
+                                      <div className="mt-2 pt-2 border-t border-black/[0.08] space-y-1.5">
+                                        {sectionPreviews.map((section) => (
+                                          <div
+                                            key={section.id}
+                                            className="rounded-md border border-black/[0.08] bg-black/[0.02] px-1.5 py-1"
+                                          >
+                                            <p className="text-[10px] font-semibold text-foreground truncate">{section.name}</p>
+                                            {section.exercises.length > 0 ? (
+                                              <div className="mt-1 space-y-0.5">
+                                                {section.exercises.map((exercise) => (
+                                                  <div
+                                                    key={exercise.id}
+                                                    draggable={editing}
+                                                    onDragStart={(event) => {
+                                                      if (!editing) return;
+                                                      event.stopPropagation();
+                                                      event.dataTransfer.effectAllowed = "move";
+                                                      setDragPlannerExercise({
+                                                        sourceWorkoutId: entry.workout.id,
+                                                        sourceExerciseId: exercise.id,
+                                                      });
+                                                      setDropPlannerExerciseWorkoutId(null);
+                                                      setDragWorkoutIdx(null);
+                                                      setDropWorkoutTarget(null);
+                                                      setDropWorkoutTailColumn(null);
+                                                    }}
+                                                    onDragEnd={(event) => {
+                                                      event.stopPropagation();
+                                                      resetPlannerExerciseDragState();
+                                                    }}
+                                                    className={`text-[10px] truncate rounded px-1 py-0.5 transition-colors ${
+                                                      editing
+                                                        ? "cursor-grab text-foreground hover:bg-black/[0.05]"
+                                                        : "text-muted"
+                                                    }`}
+                                                    title={editing ? "Drag to another session" : undefined}
+                                                  >
+                                                    {exercise.name}
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            ) : (
+                                              <p className="mt-1 text-[10px] text-muted italic">No exercises</p>
+                                            )}
+                                          </div>
+                                        ))}
+
+                                        {unsectionedExercises.length > 0 && (
+                                          <div className="rounded-md border border-black/[0.08] bg-black/[0.02] px-1.5 py-1">
+                                            <p className="text-[10px] font-semibold text-foreground">Unsectioned</p>
+                                            <div className="mt-1 space-y-0.5">
+                                              {unsectionedExercises.map((exercise) => (
+                                                <div
+                                                  key={exercise.id}
+                                                  draggable={editing}
+                                                  onDragStart={(event) => {
+                                                    if (!editing) return;
+                                                    event.stopPropagation();
+                                                    event.dataTransfer.effectAllowed = "move";
+                                                    setDragPlannerExercise({
+                                                      sourceWorkoutId: entry.workout.id,
+                                                      sourceExerciseId: exercise.id,
+                                                    });
+                                                    setDropPlannerExerciseWorkoutId(null);
+                                                    setDragWorkoutIdx(null);
+                                                    setDropWorkoutTarget(null);
+                                                    setDropWorkoutTailColumn(null);
+                                                  }}
+                                                  onDragEnd={(event) => {
+                                                    event.stopPropagation();
+                                                    resetPlannerExerciseDragState();
+                                                  }}
+                                                  className={`text-[10px] truncate rounded px-1 py-0.5 transition-colors ${
+                                                    editing
+                                                      ? "cursor-grab text-foreground hover:bg-black/[0.05]"
+                                                      : "text-muted"
+                                                  }`}
+                                                  title={editing ? "Drag to another session" : undefined}
+                                                >
+                                                  {exercise.name}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })}
