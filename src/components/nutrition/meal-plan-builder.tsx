@@ -96,6 +96,11 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
     Record<string, number>
   >({});
   const [detailRecipe, setDetailRecipe] = useState<Recipe | null>(null);
+  const [detailOptionId, setDetailOptionId] = useState<string | null>(null);
+  const [editingClientRecipe, setEditingClientRecipe] = useState<{
+    optionId: string;
+    recipe: Recipe;
+  } | null>(null);
   const [activeDrag, setActiveDrag] = useState<DragData | null>(null);
 
   // Dirty state tracking (Phase 2)
@@ -284,6 +289,9 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
         type: "recipe",
         recipeId: recipe.id,
         recipeServings: 1,
+        name: recipe.name,
+        imageUrl: recipe.imageUrl,
+        instructions: recipe.instructions,
         ingredients: [],
         totalCalories: recipe.perServingCalories,
         totalProtein: recipe.perServingProtein,
@@ -405,6 +413,48 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
     setShowCreateRecipe(false);
   }
 
+  function handleSaveClientRecipeSnapshot(optionId: string, recipe: Recipe) {
+    setPlan((prev) => ({
+      ...prev,
+      planMeals: prev.planMeals.map((pm) => ({
+        ...pm,
+        options: pm.options.map((opt) =>
+          opt.id === optionId
+            ? {
+              ...opt,
+              type: "recipe",
+              recipeId: null,
+              recipeServings: Math.max(0.5, recipe.servings),
+              name: recipe.name,
+              imageUrl: recipe.imageUrl,
+              instructions: recipe.instructions,
+              ingredients: recipe.ingredients.map((ingredient) => ({ ...ingredient })),
+              totalCalories: recipe.totalCalories,
+              totalProtein: recipe.totalProtein,
+              totalCarbs: recipe.totalCarbs,
+              totalFat: recipe.totalFat,
+            }
+            : opt
+        ),
+      })),
+    }));
+  }
+
+  function handleEditRecipeForClient() {
+    if (!isClientPlan || !detailRecipe || !detailOptionId) return;
+    setEditingClientRecipe({
+      optionId: detailOptionId,
+      recipe: detailRecipe,
+    });
+  }
+
+  function handleSaveEditedClientRecipe(recipe: Recipe) {
+    if (!editingClientRecipe) return;
+    handleSaveClientRecipeSnapshot(editingClientRecipe.optionId, recipe);
+    setDetailRecipe(recipe);
+    setEditingClientRecipe(null);
+  }
+
   // ── Day totals (uses active option per slot) ───────────────────────────
 
   const dayTotals = useMemo(() => {
@@ -437,6 +487,17 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
                 const usdaIng = getIngredientByFdcId(ing.fdcId);
                 if (usdaIng) {
                   fibre += (usdaIng.nutrients.fiber ?? 0) * (ing.gramWeight / 100) * servingsRatio;
+                }
+              }
+            } else {
+              const ingredientCalories = opt.ingredients.reduce((sum, ing) => sum + ing.calories, 0);
+              const scalingRatio = ingredientCalories > 0
+                ? opt.totalCalories / ingredientCalories
+                : 1;
+              for (const ing of opt.ingredients) {
+                const usdaIng = getIngredientByFdcId(ing.fdcId);
+                if (usdaIng) {
+                  fibre += (usdaIng.nutrients.fiber ?? 0) * (ing.gramWeight / 100) * scalingRatio;
                 }
               }
             }
@@ -848,7 +909,10 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
                       }))
                     }
                     onUpdateMeal={updatePlanMeal}
-                    onRecipeClick={(recipe) => setDetailRecipe(recipe)}
+                    onRecipeClick={(recipe, option) => {
+                      setDetailRecipe(recipe);
+                      setDetailOptionId(option.id);
+                    }}
                   />
                 );
               })}
@@ -871,7 +935,15 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
         {detailRecipe && (
           <RecipeDetailPanel
             recipe={detailRecipe}
-            onClose={() => setDetailRecipe(null)}
+            onClose={() => {
+              setDetailRecipe(null);
+              setDetailOptionId(null);
+            }}
+            onEditForClient={
+              isClientPlan && detailOptionId
+                ? handleEditRecipeForClient
+                : undefined
+            }
           />
         )}
 
@@ -905,6 +977,14 @@ export function MealPlanBuilder({ plan: initialPlan }: MealPlanBuilderProps) {
             recipe={null}
             onSave={handleCreateRecipe}
             onClose={() => setShowCreateRecipe(false)}
+          />
+        )}
+
+        {editingClientRecipe && (
+          <RecipeEditorModal
+            recipe={editingClientRecipe.recipe}
+            onSave={handleSaveEditedClientRecipe}
+            onClose={() => setEditingClientRecipe(null)}
           />
         )}
       </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { X, ChevronDown, ChevronRight, ChefHat, Clock, Users } from "lucide-react";
+import { X, ChevronDown, ChevronRight, ChefHat, Clock, Users, Pencil } from "lucide-react";
 import type { Recipe } from "@/lib/types";
 import { getIngredientByFdcId } from "@/lib/nutrition-utils";
 import { NUTRIENT_DEFINITIONS } from "@/lib/ingredient-data";
@@ -10,9 +10,10 @@ import { formatPercentRda } from "@/lib/nutrient-reference-values";
 interface RecipeDetailPanelProps {
   recipe: Recipe;
   onClose: () => void;
+  onEditForClient?: () => void;
 }
 
-export function RecipeDetailPanel({ recipe, onClose }: RecipeDetailPanelProps) {
+export function RecipeDetailPanel({ recipe, onClose, onEditForClient }: RecipeDetailPanelProps) {
   const [showMicros, setShowMicros] = useState(false);
 
   // Compute aggregate micronutrients
@@ -56,12 +57,23 @@ export function RecipeDetailPanel({ recipe, onClose }: RecipeDetailPanelProps) {
           <ChefHat size={14} className="text-accent" />
           <h3 className="text-sm font-bold text-foreground truncate">{recipe.name}</h3>
         </div>
-        <button
-          onClick={onClose}
-          className="p-1 rounded text-muted hover:text-foreground hover:bg-black/5"
-        >
-          <X size={14} />
-        </button>
+        <div className="flex items-center gap-1.5">
+          {onEditForClient && (
+            <button
+              onClick={onEditForClient}
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-medium text-accent hover:bg-accent/10 transition-colors"
+            >
+              <Pencil size={10} />
+              Edit for client
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="p-1 rounded text-muted hover:text-foreground hover:bg-black/5"
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Content */}

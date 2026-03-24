@@ -24,7 +24,7 @@ interface MealSlotCardProps {
   activeOptionNum: number;
   onActiveOptionChange: (optionNum: number) => void;
   onUpdateMeal: (updated: PlanMeal) => void;
-  onRecipeClick?: (recipe: Recipe) => void;
+  onRecipeClick?: (recipe: Recipe, option: MealOption) => void;
 }
 
 const SLOT_COLORS: Record<string, string> = {
@@ -58,6 +58,39 @@ function createEmptyOption(optionNumber: number): MealOption {
     totalProtein: 0,
     totalCarbs: 0,
     totalFat: 0,
+  };
+}
+
+function buildRecipeSnapshot(option: MealOption): Recipe | null {
+  if (option.type !== "recipe") return null;
+  const hasSnapshot =
+    Boolean(option.name?.trim()) ||
+    Boolean(option.imageUrl) ||
+    Boolean(option.instructions?.trim()) ||
+    option.ingredients.length > 0;
+  if (!hasSnapshot) return null;
+
+  const servings = Math.max(0.5, option.recipeServings || 1);
+  return {
+    id: option.recipeId ?? `meal-option-${option.id}`,
+    name: option.name?.trim() || "Custom Recipe",
+    category: "Other",
+    description: "",
+    imageUrl: option.imageUrl ?? null,
+    ingredients: option.ingredients,
+    servings,
+    prepTimeMinutes: null,
+    instructions: option.instructions ?? null,
+    tags: [],
+    totalCalories: option.totalCalories,
+    totalProtein: option.totalProtein,
+    totalCarbs: option.totalCarbs,
+    totalFat: option.totalFat,
+    perServingCalories: option.totalCalories / servings,
+    perServingProtein: option.totalProtein / servings,
+    perServingCarbs: option.totalCarbs / servings,
+    perServingFat: option.totalFat / servings,
+    createdAt: "1970-01-01T00:00:00.000Z",
   };
 }
 
@@ -122,8 +155,10 @@ export function MealSlotCard({
   }
 
   function handleServingsChange(delta: number) {
-    if (!activeOpt || !activeOpt.recipeId) return;
-    const recipe = recipeStore.getById(activeOpt.recipeId);
+    if (!activeOpt || activeOpt.type !== "recipe") return;
+    const recipe = activeOpt.recipeId
+      ? recipeStore.getById(activeOpt.recipeId) ?? buildRecipeSnapshot(activeOpt)
+      : buildRecipeSnapshot(activeOpt);
     if (!recipe) return;
     const newServings = Math.max(0.5, (activeOpt.recipeServings || 1) + delta);
     updateActiveOption({
@@ -140,6 +175,9 @@ export function MealSlotCard({
       type: "recipe",
       recipeId: null,
       recipeServings: 1,
+      name: null,
+      imageUrl: null,
+      instructions: null,
       ingredients: [],
       totalCalories: 0,
       totalProtein: 0,
@@ -192,8 +230,10 @@ export function MealSlotCard({
     });
   }
 
-  const recipe = activeOpt?.recipeId
-    ? recipeStore.getById(activeOpt.recipeId)
+  const recipe = activeOpt?.type === "recipe"
+    ? (activeOpt.recipeId
+      ? recipeStore.getById(activeOpt.recipeId) ?? buildRecipeSnapshot(activeOpt)
+      : buildRecipeSnapshot(activeOpt))
     : null;
 
   return (
@@ -261,7 +301,7 @@ export function MealSlotCard({
           <p className="text-xs text-muted text-center py-4">
             No options configured
           </p>
-        ) : activeOpt.recipeId && recipe ? (
+        ) : activeOpt.type === "recipe" && recipe ? (
           /* ── Recipe option ──────────────────────────────────── */
           <div className="space-y-2">
             <div className="flex items-center gap-3">
@@ -270,7 +310,7 @@ export function MealSlotCard({
               </div>
               <div className="flex-1 min-w-0">
                 <button
-                  onClick={() => onRecipeClick?.(recipe)}
+                  onClick={() => onRecipeClick?.(recipe, activeOpt)}
                   className="text-sm font-medium text-foreground truncate hover:text-accent transition-colors text-left block w-full"
                 >
                   {recipe.name}
