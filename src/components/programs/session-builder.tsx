@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Plus,
   ArrowLeft,
@@ -15,18 +15,35 @@ import {
   Rows3,
   X,
   ChevronDown,
+  BarChart3,
+  Flame,
+  BookmarkPlus,
+  Search,
+  Loader2,
 } from "lucide-react";
 import {
   ProgramWithPhases,
   PhaseWorkoutWithSections,
   WorkoutExerciseWithSets,
   SetData,
+  PlannerInsightView,
+  PlannerSplitMatrixMode,
+  WorkoutSectionTemplate,
+  WorkoutSectionTemplateExercise,
 } from "@/lib/types";
 import { EXERCISES } from "@/lib/exercise-data";
 import { Exercise, SET_TYPE_OPTIONS, SetType } from "@/lib/types";
 import { ExerciseEditorModal } from "@/components/exercises/exercise-editor-modal";
 import { ExerciseLibrarySidebar } from "./exercise-library-sidebar";
-import { fetchExercises, getCoachId, isSupabaseConfigured, saveExercise } from "@/lib/supabase/db";
+import {
+  deleteWorkoutSectionTemplate,
+  fetchExercises,
+  fetchWorkoutSectionTemplates,
+  getCoachId,
+  isSupabaseConfigured,
+  saveExercise,
+  saveWorkoutSectionTemplate,
+} from "@/lib/supabase/db";
 
 interface SessionBuilderProps {
   program: ProgramWithPhases;
@@ -36,6 +53,80 @@ interface SessionBuilderProps {
   onProgramChange: (fn: (p: ProgramWithPhases) => void) => void;
   onBack: () => void;
   initialWorkoutIdx?: number;
+}
+
+const MAJOR_COMPOUND_PATTERNS = new Set([
+  "Lower Body Push",
+  "Lower Body Hinge",
+  "Upper Push",
+  "Upper Pull",
+  "Full Body",
+  "Olympic",
+]);
+
+const TRACKING_TYPE_WEIGHTS: Record<SetType, number> = {
+  "Weight/Reps/RPE": 1,
+  "Weight/Reps/%1RM": 1,
+  "Time/Weight/RPE": 0.9,
+  "Time": 0.8,
+  "Distance/RPE": 0.8,
+  "Cal/RPE": 0.8,
+  "Free Text": 0,
+};
+
+type HeatmapBand = "none" | "very_light" | "light" | "moderate" | "high" | "very_high";
+
+function toEffortFactor(rpe: number | null | undefined): number {
+  if (rpe == null || !Number.isFinite(rpe)) return 0.4;
+  if (rpe >= 8) return 1;
+  if (rpe >= 7) return 0.85;
+  if (rpe >= 6) return 0.7;
+  if (rpe >= 5) return 0.55;
+  return 0.4;
+}
+
+function resolveExerciseRpe(exercise: WorkoutExerciseWithSets): number | null {
+  const validSetRpe = (exercise.set_data ?? [])
+    .map((setRow) => Number((setRow as Record<string, unknown>).rpe))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (validSetRpe.length > 0) {
+    return validSetRpe.reduce((sum, value) => sum + value, 0) / validSetRpe.length;
+  }
+  const scalar = Number((exercise as unknown as { rpe?: number }).rpe);
+  if (Number.isFinite(scalar) && scalar > 0) return scalar;
+  return null;
+}
+
+function resolveSetCount(exercise: WorkoutExerciseWithSets): number {
+  const setDataCount = Array.isArray(exercise.set_data) ? exercise.set_data.length : 0;
+  if (setDataCount > 0) return setDataCount;
+  const explicit = Number(exercise.sets ?? 0);
+  return Number.isFinite(explicit) && explicit > 0 ? explicit : 0;
+}
+
+function inferMovementPatternFromName(name: string): string {
+  const normalized = name.toLowerCase();
+  if (/(clean|snatch|jerk)/.test(normalized)) return "Olympic";
+  if (/(carry|farmer|suitcase|yoke)/.test(normalized)) return "Carry";
+  if (/(squat|lunge|step up|split squat|leg press)/.test(normalized)) return "Lower Body Push";
+  if (/(deadlift|hinge|rdl|hip thrust|good morning|hamstring curl|kettlebell swing)/.test(normalized)) {
+    return "Lower Body Hinge";
+  }
+  if (/(bench|press|push up|dip|overhead press|landmine press|incline press)/.test(normalized)) {
+    return "Upper Push";
+  }
+  if (/(row|pull up|chin up|pulldown|face pull|lat pull)/.test(normalized)) return "Upper Pull";
+  if (/(thruster|burpee|wall ball|man maker)/.test(normalized)) return "Full Body";
+  return "Unclassified";
+}
+
+function resolveHeatmapBand(score: number): HeatmapBand {
+  if (score <= 0) return "none";
+  if (score <= 10) return "very_light";
+  if (score <= 18) return "light";
+  if (score <= 28) return "moderate";
+  if (score <= 38) return "high";
+  return "very_high";
 }
 
 export function SessionBuilder({
@@ -76,6 +167,8 @@ export function SessionBuilder({
   ];
 
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("tabs");
+  const [plannerInsightView, setPlannerInsightView] = useState<PlannerInsightView>("sessions");
+  const [splitMatrixMode, setSplitMatrixMode] = useState<PlannerSplitMatrixMode>("movement");
   const [workoutIdx, setWorkoutIdx] = useState(initialWorkoutIdx);
   const [plannerEditorOpen, setPlannerEditorOpen] = useState(false);
   const [exerciseLibrary, setExerciseLibrary] = useState<Exercise[]>(EXERCISES);
@@ -108,6 +201,14 @@ export function SessionBuilder({
   const [showExMenu, setShowExMenu] = useState<number | null>(null);
   const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
   const [isExEditorOpen, setIsExEditorOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [templateSearch, setTemplateSearch] = useState("");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+  const [sectionTemplates, setSectionTemplates] = useState<WorkoutSectionTemplate[]>([]);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const [templateBusyId, setTemplateBusyId] = useState<number | null>(null);
+  const [templateBusyLabel, setTemplateBusyLabel] = useState("");
+  const [templateError, setTemplateError] = useState<string | null>(null);
 
   const phase = program.phases[phaseIdx];
   const workout = phase?.workouts[workoutIdx];
@@ -156,6 +257,115 @@ export function SessionBuilder({
       entries: buckets.get(column.key) ?? [],
     }));
   })();
+
+  const plannerInsights = useMemo(() => {
+    const dayColumns = WEEKDAY_OPTIONS;
+    const dayIndexByWeekday = new Map<number, number>(
+      dayColumns.map((column, index) => [column.value, index])
+    );
+    const movementMatrix = new Map<string, number[]>();
+    const muscleMatrix = new Map<string, number[]>();
+    const dayLoadScores = dayColumns.map(() => 0);
+    let unscheduledLoadScore = 0;
+
+    if (!phase) {
+      return {
+        dayColumns,
+        movementRows: [] as Array<{ label: string; values: number[]; total: number }>,
+        muscleRows: [] as Array<{ label: string; values: number[]; total: number }>,
+        dayLoadScores,
+        unscheduledLoadScore,
+      };
+    }
+
+    const exerciseById = new Map<number, Exercise>();
+    for (const exercise of exerciseLibrary) {
+      exerciseById.set(exercise.id, exercise);
+    }
+
+    const resolveMovementPattern = (exercise: WorkoutExerciseWithSets): string => {
+      if (exercise.exercise_id != null) {
+        const libraryExercise = exerciseById.get(exercise.exercise_id);
+        const primaryMovement = libraryExercise?.movement_patterns?.[0];
+        if (primaryMovement && primaryMovement.trim().length > 0) {
+          return primaryMovement;
+        }
+      }
+      return inferMovementPatternFromName(exercise.name ?? "");
+    };
+
+    const resolveMuscleGroup = (exercise: WorkoutExerciseWithSets): string => {
+      if (exercise.muscle_group && exercise.muscle_group.trim().length > 0) {
+        return exercise.muscle_group.trim();
+      }
+      if (exercise.exercise_id != null) {
+        const libraryExercise = exerciseById.get(exercise.exercise_id);
+        if (libraryExercise?.primary_muscle_group?.trim()) {
+          return libraryExercise.primary_muscle_group.trim();
+        }
+      }
+      return "Unclassified";
+    };
+
+    const addToMatrix = (matrix: Map<string, number[]>, rowName: string, dayIndex: number, value: number) => {
+      const rowLabel = rowName.trim().length > 0 ? rowName.trim() : "Unclassified";
+      if (!matrix.has(rowLabel)) {
+        matrix.set(rowLabel, dayColumns.map(() => 0));
+      }
+      const row = matrix.get(rowLabel)!;
+      row[dayIndex] += value;
+    };
+
+    for (const session of phase.workouts) {
+      const dayIndex = dayIndexByWeekday.get(session.scheduled_weekday ?? -1);
+
+      for (const exercise of session.exercises) {
+        const setCount = resolveSetCount(exercise);
+        const effortFactor = toEffortFactor(resolveExerciseRpe(exercise));
+        const effectiveSets = setCount * effortFactor;
+        if (!Number.isFinite(effectiveSets) || effectiveSets <= 0) {
+          continue;
+        }
+
+        const movementPattern = resolveMovementPattern(exercise);
+        const muscleGroup = resolveMuscleGroup(exercise);
+        if (dayIndex != null) {
+          addToMatrix(movementMatrix, movementPattern, dayIndex, effectiveSets);
+          addToMatrix(muscleMatrix, muscleGroup, dayIndex, effectiveSets);
+        }
+
+        const trackingWeight = TRACKING_TYPE_WEIGHTS[exercise.tracking_type as SetType] ?? 0.8;
+        const patternWeight = MAJOR_COMPOUND_PATTERNS.has(movementPattern) ? 1.15 : 1;
+        const loadScore = effectiveSets * trackingWeight * patternWeight;
+        if (!Number.isFinite(loadScore) || loadScore <= 0) continue;
+
+        if (dayIndex != null) {
+          dayLoadScores[dayIndex] += loadScore;
+        } else {
+          unscheduledLoadScore += loadScore;
+        }
+      }
+    }
+
+    const mapToRows = (matrix: Map<string, number[]>) =>
+      Array.from(matrix.entries())
+        .map(([label, values]) => {
+          const total = values.reduce((sum, value) => sum + value, 0);
+          return { label, values, total };
+        })
+        .sort((a, b) => {
+          if (b.total !== a.total) return b.total - a.total;
+          return a.label.localeCompare(b.label);
+        });
+
+    return {
+      dayColumns,
+      movementRows: mapToRows(movementMatrix),
+      muscleRows: mapToRows(muscleMatrix),
+      dayLoadScores,
+      unscheduledLoadScore,
+    };
+  }, [exerciseLibrary, phase]);
 
   const normalizeVideoUrl = (raw: string): string => {
     const trimmed = raw.trim();
@@ -208,6 +418,47 @@ export function SessionBuilder({
     return youtubeId ? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg` : null;
   };
 
+  const loadSectionTemplates = async () => {
+    if (!isSupabaseConfigured()) {
+      setSectionTemplates([]);
+      return;
+    }
+    setIsLoadingTemplates(true);
+    setTemplateError(null);
+    try {
+      const templates = await fetchWorkoutSectionTemplates();
+      setSectionTemplates(templates);
+      setSelectedTemplateId((current) => {
+        if (templates.length === 0) return null;
+        if (current != null && templates.some((template) => template.id === current)) {
+          return current;
+        }
+        return templates[0].id;
+      });
+    } catch (error) {
+      console.error("[SessionBuilder] Failed to load section templates:", error);
+      setTemplateError("Could not load section templates.");
+    } finally {
+      setIsLoadingTemplates(false);
+    }
+  };
+
+  const filteredSectionTemplates = useMemo(() => {
+    const query = templateSearch.trim().toLowerCase();
+    if (!query) return sectionTemplates;
+    return sectionTemplates.filter((template) => {
+      const nameMatch = template.name.toLowerCase().includes(query);
+      const categoryMatch = (template.category ?? "").toLowerCase().includes(query);
+      const exerciseMatch = template.exercises.some((exercise) =>
+        exercise.name.toLowerCase().includes(query)
+      );
+      return nameMatch || categoryMatch || exerciseMatch;
+    });
+  }, [sectionTemplates, templateSearch]);
+
+  const selectedTemplate =
+    sectionTemplates.find((template) => template.id === selectedTemplateId) ?? null;
+
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
     fetchExercises()
@@ -219,6 +470,10 @@ export function SessionBuilder({
       .catch((error) => {
         console.error("[SessionBuilder] Failed to fetch exercise library:", error);
       });
+  }, []);
+
+  useEffect(() => {
+    void loadSectionTemplates();
   }, []);
 
   useEffect(() => {
@@ -499,6 +754,250 @@ export function SessionBuilder({
         sort_order: wk.workout_sections.length,
       });
     });
+  };
+
+  const buildTemplateExercise = (
+    templateId: number,
+    exercise: WorkoutExerciseWithSets,
+    sortOrder: number
+  ): WorkoutSectionTemplateExercise => {
+    const templateNumericFields = exercise as unknown as {
+      pct_1rm?: number;
+      rpe?: number;
+      calories?: number;
+      duration?: string;
+      distance?: string;
+    };
+    const templateExerciseId = Date.now() + sortOrder;
+    const setData = (exercise.set_data ?? []).map((setRow, setIndex) => ({
+      ...setRow,
+      id: Number(setRow.id ?? templateExerciseId + setIndex + 1),
+      set_number: Number(setRow.set_number ?? setIndex + 1),
+      weight: Number(setRow.weight ?? 0),
+      min_reps: Number(setRow.min_reps ?? 0),
+      max_reps: Number(setRow.max_reps ?? 0),
+      rest_seconds: Number(setRow.rest_seconds ?? 90),
+      done: Boolean(setRow.done ?? false),
+    }));
+
+    return {
+      id: templateExerciseId,
+      template_id: templateId,
+      sort_order: sortOrder,
+      exercise_id: exercise.exercise_id ?? null,
+      name: exercise.name,
+      muscle_group: exercise.muscle_group ?? null,
+      tracking_type: exercise.tracking_type,
+      sets: Number(exercise.sets ?? setData.length),
+      weight: Number(exercise.weight ?? 0),
+      min_reps: Number(exercise.min_reps ?? 0),
+      max_reps: Number(exercise.max_reps ?? 0),
+      rest_seconds: Number(exercise.rest_seconds ?? 90),
+      pct_1rm: Number(templateNumericFields.pct_1rm ?? 0),
+      rpe: Number(templateNumericFields.rpe ?? 0),
+      calories: Number(templateNumericFields.calories ?? 0),
+      duration: String(templateNumericFields.duration ?? ""),
+      distance: String(templateNumericFields.distance ?? ""),
+      notes: exercise.notes ?? null,
+      set_data: setData,
+      whiteboard_video_urls: Array.isArray(exercise.whiteboard_video_urls)
+        ? [...exercise.whiteboard_video_urls]
+        : [],
+    };
+  };
+
+  const saveSectionAsTemplate = async (sectionIndex: number) => {
+    const section = workout?.workout_sections[sectionIndex];
+    if (!workout || !section) return;
+
+    if (!isSupabaseConfigured()) {
+      setTemplateError("Supabase is required to save section templates.");
+      return;
+    }
+
+    const templateName = window.prompt("Template name", section.name)?.trim();
+    if (!templateName) return;
+    const categoryInput = window.prompt("Category (optional)", "General");
+    const category = categoryInput?.trim() || null;
+    const sectionExercises = workout.exercises
+      .filter((exercise) => exercise.section_index === sectionIndex)
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+      .map((exercise, sortOrder) => buildTemplateExercise(0, exercise, sortOrder));
+
+    setTemplateBusyId(section.id);
+    setTemplateBusyLabel("Saving...");
+    setTemplateError(null);
+    try {
+      await saveWorkoutSectionTemplate({
+        name: templateName,
+        category,
+        notes: section.notes ?? null,
+        exercises: sectionExercises,
+      });
+      await loadSectionTemplates();
+      setTemplatesOpen(true);
+    } catch (error) {
+      console.error("[SessionBuilder] Failed to save section template:", error);
+      setTemplateError("Could not save section template.");
+    } finally {
+      setTemplateBusyId(null);
+      setTemplateBusyLabel("");
+    }
+  };
+
+  const applyTemplateToCurrentWorkout = (template: WorkoutSectionTemplate) => {
+    if (!workout) return;
+    updateWorkout((wk) => {
+      const sectionIndex = wk.workout_sections.length;
+      const sectionId = Date.now();
+      wk.workout_sections.push({
+        id: sectionId,
+        workout_id: wk.id,
+        name: template.name,
+        notes: template.notes ?? "",
+        sort_order: sectionIndex,
+      });
+
+      let nextExerciseId =
+        wk.exercises.reduce((max, entry) => Math.max(max, Number(entry.id) || 0), 0) + 1;
+      let nextSetId =
+        wk.exercises.reduce((max, entry) => {
+          const setMax = (entry.set_data ?? []).reduce(
+            (inner, setRow) => Math.max(inner, Number(setRow.id) || 0),
+            0
+          );
+          return Math.max(max, setMax);
+        }, 0) + 1;
+
+      const sortedTemplateExercises = [...template.exercises].sort(
+        (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)
+      );
+
+      for (const templateExercise of sortedTemplateExercises) {
+        const copiedSetData = (templateExercise.set_data ?? []).map((setRow, setIndex) => {
+          const id = nextSetId++;
+          return {
+            ...setRow,
+            id,
+            set_number: Number(setRow.set_number ?? setIndex + 1),
+            weight: Number(setRow.weight ?? 0),
+            min_reps: Number(setRow.min_reps ?? 0),
+            max_reps: Number(setRow.max_reps ?? 0),
+            rest_seconds: Number(setRow.rest_seconds ?? 90),
+            done: false,
+          };
+        });
+
+        wk.exercises.push({
+          id: nextExerciseId++,
+          workout_id: wk.id,
+          section_id: null,
+          exercise_id: templateExercise.exercise_id,
+          name: templateExercise.name,
+          muscle_group: templateExercise.muscle_group,
+          sets: Number(templateExercise.sets ?? copiedSetData.length),
+          weight: Number(templateExercise.weight ?? 0),
+          min_reps: Number(templateExercise.min_reps ?? 0),
+          max_reps: Number(templateExercise.max_reps ?? 0),
+          rest_seconds: Number(templateExercise.rest_seconds ?? 90),
+          notes: templateExercise.notes ?? "",
+          sort_order: wk.exercises.length,
+          expanded: false,
+          tracking_type: templateExercise.tracking_type,
+          alternate_exercise_ids: [],
+          section_index: sectionIndex,
+          set_data: copiedSetData,
+          whiteboard_video_urls: Array.isArray(templateExercise.whiteboard_video_urls)
+            ? [...templateExercise.whiteboard_video_urls]
+            : [],
+          pct_1rm: Number(templateExercise.pct_1rm ?? 0),
+          rpe: Number(templateExercise.rpe ?? 0),
+          calories: Number(templateExercise.calories ?? 0),
+          duration: templateExercise.duration ?? "",
+          distance: templateExercise.distance ?? "",
+        } as WorkoutExerciseWithSets);
+      }
+
+      wk.workout_sections.forEach((section, index) => {
+        section.sort_order = index;
+      });
+      wk.exercises.forEach((exercise, index) => {
+        exercise.sort_order = index;
+      });
+    });
+  };
+
+  const applySelectedTemplate = () => {
+    const template = sectionTemplates.find((entry) => entry.id === selectedTemplateId);
+    if (!template) return;
+    applyTemplateToCurrentWorkout(template);
+    setTemplatesOpen(false);
+  };
+
+  const renameTemplate = async (template: WorkoutSectionTemplate) => {
+    if (!isSupabaseConfigured()) return;
+    const nextName = window.prompt("Rename template", template.name)?.trim();
+    if (!nextName || nextName === template.name) return;
+    setTemplateBusyId(template.id);
+    setTemplateBusyLabel("Saving...");
+    try {
+      await saveWorkoutSectionTemplate({
+        id: template.id,
+        name: nextName,
+        category: template.category,
+        notes: template.notes,
+        exercises: template.exercises,
+      });
+      await loadSectionTemplates();
+    } catch (error) {
+      console.error("[SessionBuilder] Failed to rename template:", error);
+      setTemplateError("Could not rename template.");
+    } finally {
+      setTemplateBusyId(null);
+      setTemplateBusyLabel("");
+    }
+  };
+
+  const recategorizeTemplate = async (template: WorkoutSectionTemplate) => {
+    if (!isSupabaseConfigured()) return;
+    const nextCategory = window.prompt("Update category (blank to clear)", template.category ?? "") ?? "";
+    const cleanedCategory = nextCategory.trim();
+    setTemplateBusyId(template.id);
+    setTemplateBusyLabel("Saving...");
+    try {
+      await saveWorkoutSectionTemplate({
+        id: template.id,
+        name: template.name,
+        category: cleanedCategory || null,
+        notes: template.notes,
+        exercises: template.exercises,
+      });
+      await loadSectionTemplates();
+    } catch (error) {
+      console.error("[SessionBuilder] Failed to update template category:", error);
+      setTemplateError("Could not update template category.");
+    } finally {
+      setTemplateBusyId(null);
+      setTemplateBusyLabel("");
+    }
+  };
+
+  const removeTemplate = async (templateId: number) => {
+    if (!isSupabaseConfigured()) return;
+    if (!window.confirm("Delete this section template?")) return;
+    setTemplateBusyId(templateId);
+    setTemplateBusyLabel("Deleting...");
+    try {
+      await deleteWorkoutSectionTemplate(templateId);
+      await loadSectionTemplates();
+      setSelectedTemplateId((current) => (current === templateId ? null : current));
+    } catch (error) {
+      console.error("[SessionBuilder] Failed to delete template:", error);
+      setTemplateError("Could not delete template.");
+    } finally {
+      setTemplateBusyId(null);
+      setTemplateBusyLabel("");
+    }
   };
 
   const addWorkout = () => {
@@ -1321,6 +1820,20 @@ export function SessionBuilder({
                 {WEEKDAY_OPTIONS.find((opt) => opt.value === workout.scheduled_weekday)?.label ?? "Not set"}
               </span>
             )}
+            <div className="flex-1" />
+            {editing && (
+              <button
+                type="button"
+                onClick={() => {
+                  setTemplateError(null);
+                  setTemplatesOpen(true);
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-black/5 border border-black/10 text-xs text-muted hover:text-foreground hover:border-accent/30 transition-colors inline-flex items-center gap-1.5"
+              >
+                <BookmarkPlus size={12} />
+                Apply Template
+              </button>
+            )}
           </div>
 
           {workout.workout_sections.map((sec, si) => {
@@ -1389,6 +1902,20 @@ export function SessionBuilder({
                       />
                     ) : (
                       <span className="text-sm font-bold">{sec.name}</span>
+                    )}
+                    {editing && (
+                      <button
+                        onClick={() => saveSectionAsTemplate(si)}
+                        className="p-1 rounded text-muted hover:text-foreground hover:bg-black/5 transition-colors"
+                        title="Save section as template"
+                        aria-label={`Save ${sec.name} as template`}
+                      >
+                        {templateBusyId === sec.id && templateBusyLabel === "Saving..." ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <BookmarkPlus size={13} />
+                        )}
+                      </button>
                     )}
                     {editing && (
                       <button
@@ -1550,6 +2077,20 @@ export function SessionBuilder({
 
   // ─── Main Render ───
 
+  const activeSplitRows =
+    splitMatrixMode === "movement" ? plannerInsights.movementRows : plannerInsights.muscleRows;
+
+  const plannerHeatmapTotal = plannerInsights.dayLoadScores.reduce((sum, value) => sum + value, 0);
+
+  const heatmapTileClassName: Record<HeatmapBand, string> = {
+    none: "border-black/12 bg-white text-muted",
+    very_light: "border-emerald-200 bg-emerald-50 text-emerald-900",
+    light: "border-lime-300 bg-lime-100 text-lime-900",
+    moderate: "border-amber-300 bg-amber-100 text-amber-900",
+    high: "border-orange-400 bg-orange-200 text-orange-900",
+    very_high: "border-red-400 bg-red-200 text-red-900",
+  };
+
   return (
     <div className="flex w-full h-full min-w-0 min-h-0">
       {/* Exercise Library Sidebar */}
@@ -1692,11 +2233,59 @@ export function SessionBuilder({
         ) : (
           <>
             <div className="px-4 py-2 border-b border-white/10 flex items-center gap-2 bg-[#1a1a1a]">
-              <span className="text-xs text-white/70">
-                Drag session cards between days to update the recommended day and order.
+              <div className="flex items-center gap-1 p-1 rounded-lg bg-white/5 border border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setPlannerInsightView("sessions")}
+                  className={`px-2.5 py-1.5 rounded-md text-xs inline-flex items-center gap-1.5 transition-colors ${
+                    plannerInsightView === "sessions"
+                      ? "bg-white/20 text-white"
+                      : "text-white/65 hover:text-white hover:bg-white/10"
+                  }`}
+                >
+                  <LayoutGrid size={12} />
+                  Sessions
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlannerInsightView("split_matrix");
+                    setPlannerEditorOpen(false);
+                  }}
+                  className={`px-2.5 py-1.5 rounded-md text-xs inline-flex items-center gap-1.5 transition-colors ${
+                    plannerInsightView === "split_matrix"
+                      ? "bg-white/20 text-white"
+                      : "text-white/65 hover:text-white hover:bg-white/10"
+                  }`}
+                >
+                  <BarChart3 size={12} />
+                  Split Matrix
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlannerInsightView("load_heatmap");
+                    setPlannerEditorOpen(false);
+                  }}
+                  className={`px-2.5 py-1.5 rounded-md text-xs inline-flex items-center gap-1.5 transition-colors ${
+                    plannerInsightView === "load_heatmap"
+                      ? "bg-white/20 text-white"
+                      : "text-white/65 hover:text-white hover:bg-white/10"
+                  }`}
+                >
+                  <Flame size={12} />
+                  Load Heatmap
+                </button>
+              </div>
+              <span className="text-xs text-white/70 ml-1">
+                {plannerInsightView === "sessions"
+                  ? "Drag sessions between days and drag exercises across sessions."
+                  : plannerInsightView === "split_matrix"
+                  ? "Effective sets by weekday with Weekly totals."
+                  : "Day load scores based on set volume, RPE effort, tracking type, and movement pattern."}
               </span>
               <div className="flex-1" />
-              {(phase?.workouts.length ?? 0) > 0 && (
+              {plannerInsightView === "sessions" && (phase?.workouts.length ?? 0) > 0 && (
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
@@ -1714,7 +2303,33 @@ export function SessionBuilder({
                   </button>
                 </div>
               )}
-              {editing && (
+              {plannerInsightView === "split_matrix" && (
+                <div className="flex items-center gap-1 p-1 rounded-lg bg-white/5 border border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => setSplitMatrixMode("movement")}
+                    className={`px-2.5 py-1.5 rounded-md text-xs transition-colors ${
+                      splitMatrixMode === "movement"
+                        ? "bg-white/20 text-white"
+                        : "text-white/65 hover:text-white hover:bg-white/10"
+                    }`}
+                  >
+                    Movement Pattern
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSplitMatrixMode("muscle")}
+                    className={`px-2.5 py-1.5 rounded-md text-xs transition-colors ${
+                      splitMatrixMode === "muscle"
+                        ? "bg-white/20 text-white"
+                        : "text-white/65 hover:text-white hover:bg-white/10"
+                    }`}
+                  >
+                    Muscle Group
+                  </button>
+                </div>
+              )}
+              {editing && plannerInsightView === "sessions" && (
                 <button
                   type="button"
                   onClick={addWorkout}
@@ -1728,197 +2343,240 @@ export function SessionBuilder({
 
             <div className="flex-1 min-h-0 p-3 overflow-hidden">
               <div className="h-full rounded-xl border border-black/[0.08] bg-black/[0.02] p-2 overflow-hidden">
-                <div className="h-full flex gap-2 min-w-0">
-                  <div className="flex-1 min-w-0 h-full">
-                    <div className="grid h-full gap-2 min-w-0" style={{ gridTemplateColumns: "repeat(8, minmax(0, 1fr))" }}>
-                      {plannerColumns.map((column) => (
-                        <div key={column.key} className="min-w-0 h-full rounded-lg border border-black/[0.08] bg-white/70 flex flex-col overflow-hidden">
-                          <div className="px-2.5 py-2 border-b border-black/[0.06] bg-black/[0.02]">
-                            <p className="text-[11px] font-semibold text-foreground truncate">{column.short}</p>
-                            <p className="text-[10px] text-muted">{column.entries.length} session{column.entries.length === 1 ? "" : "s"}</p>
-                          </div>
+                {plannerInsightView === "sessions" ? (
+                  <div className="h-full flex gap-2 min-w-0">
+                    <div className="flex-1 min-w-0 h-full">
+                      <div className="grid h-full gap-2 min-w-0" style={{ gridTemplateColumns: "repeat(8, minmax(0, 1fr))" }}>
+                        {plannerColumns.map((column) => (
+                          <div key={column.key} className="min-w-0 h-full rounded-lg border border-black/[0.08] bg-white/70 flex flex-col overflow-hidden">
+                            <div className="px-2.5 py-2 border-b border-black/[0.06] bg-black/[0.02]">
+                              <p className="text-[11px] font-semibold text-foreground truncate">{column.short}</p>
+                              <p className="text-[10px] text-muted">{column.entries.length} session{column.entries.length === 1 ? "" : "s"}</p>
+                            </div>
 
-                          <div
-                            className="flex-1 min-h-0 overflow-y-auto px-1.5 py-1.5 space-y-1.5"
-                            onDragOver={(event) => {
-                              if (!editing || dragWorkoutIdx === null || dragPlannerExercise) return;
-                              event.preventDefault();
-                              setDropWorkoutTarget(null);
-                              setDropWorkoutTailColumn(column.key);
-                            }}
-                            onDrop={(event) => {
-                              if (!editing || dragWorkoutIdx === null || dragPlannerExercise) return;
-                              event.preventDefault();
-                              const fallbackInsert = column.entries.length;
-                              moveWorkoutCard(dragWorkoutIdx, column.key, fallbackInsert);
-                              resetWorkoutDragState();
-                            }}
-                          >
-                            {column.entries.map((entry, localIdx) => {
-                              const sectionCount = entry.workout.workout_sections.length;
-                              const exerciseCount = entry.workout.exercises.length;
-                              const setCount = entry.workout.exercises.reduce((sum, exercise) => sum + (exercise.set_data?.length ?? 0), 0);
-                              const isSelected = plannerEditorOpen && workoutIdx === entry.workoutIndex;
-                              const isExpanded = Boolean(expandedPlannerWorkoutIds[entry.workout.id]);
-                              const isExerciseDropTarget =
-                                dragPlannerExercise !== null &&
-                                dropPlannerExerciseWorkoutId === entry.workout.id;
-                              const isDropBefore =
-                                dropWorkoutTarget?.columnKey === column.key &&
-                                dropWorkoutTarget.anchorWorkoutIndex === entry.workoutIndex &&
-                                dropWorkoutTarget.position === "before";
-                              const isDropAfter =
-                                dropWorkoutTarget?.columnKey === column.key &&
-                                dropWorkoutTarget.anchorWorkoutIndex === entry.workoutIndex &&
-                                dropWorkoutTarget.position === "after";
-                              const sectionPreviews = entry.workout.workout_sections.map((section, sectionIndex) => ({
-                                id: section.id,
-                                name: section.name,
-                                exercises: entry.workout.exercises.filter((exercise) => exercise.section_index === sectionIndex),
-                              }));
-                              const unsectionedExercises = entry.workout.exercises.filter((exercise) => exercise.section_index === -1);
+                            <div
+                              className="flex-1 min-h-0 overflow-y-auto px-1.5 py-1.5 space-y-1.5"
+                              onDragOver={(event) => {
+                                if (!editing || dragWorkoutIdx === null || dragPlannerExercise) return;
+                                event.preventDefault();
+                                setDropWorkoutTarget(null);
+                                setDropWorkoutTailColumn(column.key);
+                              }}
+                              onDrop={(event) => {
+                                if (!editing || dragWorkoutIdx === null || dragPlannerExercise) return;
+                                event.preventDefault();
+                                const fallbackInsert = column.entries.length;
+                                moveWorkoutCard(dragWorkoutIdx, column.key, fallbackInsert);
+                                resetWorkoutDragState();
+                              }}
+                            >
+                              {column.entries.map((entry, localIdx) => {
+                                const sectionCount = entry.workout.workout_sections.length;
+                                const exerciseCount = entry.workout.exercises.length;
+                                const setCount = entry.workout.exercises.reduce((sum, exercise) => sum + (exercise.set_data?.length ?? 0), 0);
+                                const isSelected = plannerEditorOpen && workoutIdx === entry.workoutIndex;
+                                const isExpanded = Boolean(expandedPlannerWorkoutIds[entry.workout.id]);
+                                const isExerciseDropTarget =
+                                  dragPlannerExercise !== null &&
+                                  dropPlannerExerciseWorkoutId === entry.workout.id;
+                                const isDropBefore =
+                                  dropWorkoutTarget?.columnKey === column.key &&
+                                  dropWorkoutTarget.anchorWorkoutIndex === entry.workoutIndex &&
+                                  dropWorkoutTarget.position === "before";
+                                const isDropAfter =
+                                  dropWorkoutTarget?.columnKey === column.key &&
+                                  dropWorkoutTarget.anchorWorkoutIndex === entry.workoutIndex &&
+                                  dropWorkoutTarget.position === "after";
+                                const sectionPreviews = entry.workout.workout_sections.map((section, sectionIndex) => ({
+                                  id: section.id,
+                                  name: section.name,
+                                  exercises: entry.workout.exercises.filter((exercise) => exercise.section_index === sectionIndex),
+                                }));
+                                const unsectionedExercises = entry.workout.exercises.filter((exercise) => exercise.section_index === -1);
 
-                              return (
-                                <div
-                                  key={entry.workout.id}
-                                  draggable={editing && dragPlannerExercise === null}
-                                  onDragStart={(event) => {
-                                    if (!editing || dragPlannerExercise !== null) return;
-                                    event.dataTransfer.effectAllowed = "move";
-                                    setDragWorkoutIdx(entry.workoutIndex);
-                                    setDropWorkoutTarget(null);
-                                    setDropWorkoutTailColumn(null);
-                                  }}
-                                  onDragEnd={() => {
-                                    if (dragWorkoutIdx !== null) {
-                                      resetWorkoutDragState();
-                                    }
-                                  }}
-                                  onDragOver={(event) => {
-                                    if (!editing) return;
-                                    if (dragPlannerExercise !== null) {
+                                return (
+                                  <div
+                                    key={entry.workout.id}
+                                    draggable={editing && dragPlannerExercise === null}
+                                    onDragStart={(event) => {
+                                      if (!editing || dragPlannerExercise !== null) return;
+                                      event.dataTransfer.effectAllowed = "move";
+                                      setDragWorkoutIdx(entry.workoutIndex);
+                                      setDropWorkoutTarget(null);
+                                      setDropWorkoutTailColumn(null);
+                                    }}
+                                    onDragEnd={() => {
+                                      if (dragWorkoutIdx !== null) {
+                                        resetWorkoutDragState();
+                                      }
+                                    }}
+                                    onDragOver={(event) => {
+                                      if (!editing) return;
+                                      if (dragPlannerExercise !== null) {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        setDropPlannerExerciseWorkoutId(entry.workout.id);
+                                        return;
+                                      }
+                                      if (dragWorkoutIdx === null) return;
                                       event.preventDefault();
                                       event.stopPropagation();
-                                      setDropPlannerExerciseWorkoutId(entry.workout.id);
-                                      return;
-                                    }
-                                    if (dragWorkoutIdx === null) return;
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    const rect = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
-                                    const position = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
-                                    const insertIndex = position === "before" ? localIdx : localIdx + 1;
-                                    setDropWorkoutTailColumn(null);
-                                    setDropWorkoutTarget({
-                                      columnKey: column.key,
-                                      insertIndex,
-                                      anchorWorkoutIndex: entry.workoutIndex,
-                                      position,
-                                    });
-                                  }}
-                                  onDragLeave={(event) => {
-                                    if (dragPlannerExercise === null) return;
-                                    if ((event.currentTarget as HTMLDivElement).contains(event.relatedTarget as Node)) {
-                                      return;
-                                    }
-                                    if (dropPlannerExerciseWorkoutId === entry.workout.id) {
-                                      setDropPlannerExerciseWorkoutId(null);
-                                    }
-                                  }}
-                                  onDrop={(event) => {
-                                    if (!editing) return;
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    if (dragPlannerExercise !== null) {
-                                      movePlannerExerciseBetweenWorkouts(
-                                        dragPlannerExercise.sourceWorkoutId,
-                                        dragPlannerExercise.sourceExerciseId,
-                                        entry.workout.id
-                                      );
-                                      resetPlannerExerciseDragState();
-                                      return;
-                                    }
-                                    if (dragWorkoutIdx === null) return;
-                                    const insertIndex =
-                                      dropWorkoutTarget?.columnKey === column.key &&
-                                      dropWorkoutTarget.anchorWorkoutIndex === entry.workoutIndex
-                                        ? dropWorkoutTarget.insertIndex
-                                        : localIdx;
-                                    moveWorkoutCard(dragWorkoutIdx, column.key, insertIndex);
-                                    resetWorkoutDragState();
-                                  }}
-                                  className={`relative rounded-md border transition-colors ${
-                                    isExerciseDropTarget
-                                      ? "border-accent/45 bg-accent/[0.10]"
-                                      : isSelected
-                                      ? "border-accent/40 bg-accent/[0.08]"
-                                      : "border-black/[0.08] bg-white"
-                                  } ${
-                                    dragWorkoutIdx === entry.workoutIndex ? "opacity-70" : ""
-                                  }`}
-                                >
-                                  {isDropBefore && (
-                                    <div className="absolute -top-1 left-1 right-1 h-2 rounded bg-accent/20 border border-accent/30 pointer-events-none" />
-                                  )}
-                                  {isDropAfter && (
-                                    <div className="absolute -bottom-1 left-1 right-1 h-2 rounded bg-accent/20 border border-accent/30 pointer-events-none" />
-                                  )}
-                                  <div className="p-2">
-                                    <div className="flex items-start gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setWorkoutIdx(entry.workoutIndex);
-                                          setPlannerEditorOpen(true);
-                                        }}
-                                        className="min-w-0 flex-1 text-left"
-                                      >
-                                        <p className="text-xs font-semibold text-foreground truncate">{entry.workout.name}</p>
-                                        <p className="text-[10px] text-muted mt-1">
-                                          {sectionCount} section{sectionCount === 1 ? "" : "s"} · {exerciseCount} exercise{exerciseCount === 1 ? "" : "s"}
-                                        </p>
-                                        <p className="text-[10px] text-muted">{setCount} set{setCount === 1 ? "" : "s"}</p>
-                                      </button>
-                                      <button
-                                      type="button"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        togglePlannerWorkoutExpanded(entry.workout.id);
-                                      }}
-                                      className="mt-0.5 p-1 rounded text-muted hover:text-foreground hover:bg-black/5 transition-colors"
-                                      title={isExpanded ? "Collapse session" : "Expand session"}
-                                    >
-                                      <ChevronDown
-                                        size={12}
-                                        className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                                      />
-                                    </button>
-                                      {editing && (
+                                      const rect = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
+                                      const position = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+                                      const insertIndex = position === "before" ? localIdx : localIdx + 1;
+                                      setDropWorkoutTailColumn(null);
+                                      setDropWorkoutTarget({
+                                        columnKey: column.key,
+                                        insertIndex,
+                                        anchorWorkoutIndex: entry.workoutIndex,
+                                        position,
+                                      });
+                                    }}
+                                    onDragLeave={(event) => {
+                                      if (dragPlannerExercise === null) return;
+                                      if ((event.currentTarget as HTMLDivElement).contains(event.relatedTarget as Node)) {
+                                        return;
+                                      }
+                                      if (dropPlannerExerciseWorkoutId === entry.workout.id) {
+                                        setDropPlannerExerciseWorkoutId(null);
+                                      }
+                                    }}
+                                    onDrop={(event) => {
+                                      if (!editing) return;
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      if (dragPlannerExercise !== null) {
+                                        movePlannerExerciseBetweenWorkouts(
+                                          dragPlannerExercise.sourceWorkoutId,
+                                          dragPlannerExercise.sourceExerciseId,
+                                          entry.workout.id
+                                        );
+                                        resetPlannerExerciseDragState();
+                                        return;
+                                      }
+                                      if (dragWorkoutIdx === null) return;
+                                      const insertIndex =
+                                        dropWorkoutTarget?.columnKey === column.key &&
+                                        dropWorkoutTarget.anchorWorkoutIndex === entry.workoutIndex
+                                          ? dropWorkoutTarget.insertIndex
+                                          : localIdx;
+                                      moveWorkoutCard(dragWorkoutIdx, column.key, insertIndex);
+                                      resetWorkoutDragState();
+                                    }}
+                                    className={`relative rounded-md border transition-colors ${
+                                      isExerciseDropTarget
+                                        ? "border-accent/45 bg-accent/[0.10]"
+                                        : isSelected
+                                        ? "border-accent/40 bg-accent/[0.08]"
+                                        : "border-black/[0.08] bg-white"
+                                    } ${
+                                      dragWorkoutIdx === entry.workoutIndex ? "opacity-70" : ""
+                                    }`}
+                                  >
+                                    {isDropBefore && (
+                                      <div className="absolute -top-1 left-1 right-1 h-2 rounded bg-accent/20 border border-accent/30 pointer-events-none" />
+                                    )}
+                                    {isDropAfter && (
+                                      <div className="absolute -bottom-1 left-1 right-1 h-2 rounded bg-accent/20 border border-accent/30 pointer-events-none" />
+                                    )}
+                                    <div className="p-2">
+                                      <div className="flex items-start gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setWorkoutIdx(entry.workoutIndex);
+                                            setPlannerEditorOpen(true);
+                                          }}
+                                          className="min-w-0 flex-1 text-left"
+                                        >
+                                          <p className="text-xs font-semibold text-foreground truncate">{entry.workout.name}</p>
+                                          <p className="text-[10px] text-muted mt-1">
+                                            {sectionCount} section{sectionCount === 1 ? "" : "s"} · {exerciseCount} exercise{exerciseCount === 1 ? "" : "s"}
+                                          </p>
+                                          <p className="text-[10px] text-muted">{setCount} set{setCount === 1 ? "" : "s"}</p>
+                                        </button>
                                         <button
                                           type="button"
                                           onClick={(event) => {
                                             event.stopPropagation();
-                                            removeWorkout(entry.workoutIndex);
+                                            togglePlannerWorkoutExpanded(entry.workout.id);
                                           }}
-                                          className="mt-0.5 p-1 rounded text-muted hover:text-red-600 hover:bg-red-50 transition-colors"
-                                          title="Delete session"
+                                          className="mt-0.5 p-1 rounded text-muted hover:text-foreground hover:bg-black/5 transition-colors"
+                                          title={isExpanded ? "Collapse session" : "Expand session"}
                                         >
-                                          <Trash2 size={11} />
+                                          <ChevronDown
+                                            size={12}
+                                            className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                                          />
                                         </button>
-                                      )}
-                                    </div>
-
-                                    {isExpanded && (
-                                      <div className="mt-2 pt-2 border-t border-black/[0.08] space-y-1.5">
-                                        {sectionPreviews.map((section) => (
-                                          <div
-                                            key={section.id}
-                                            className="rounded-md border border-black/[0.08] bg-black/[0.02] px-1.5 py-1"
+                                        {editing && (
+                                          <button
+                                            type="button"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              removeWorkout(entry.workoutIndex);
+                                            }}
+                                            className="mt-0.5 p-1 rounded text-muted hover:text-red-600 hover:bg-red-50 transition-colors"
+                                            title="Delete session"
                                           >
-                                            <p className="text-[10px] font-semibold text-foreground truncate">{section.name}</p>
-                                            {section.exercises.length > 0 ? (
+                                            <Trash2 size={11} />
+                                          </button>
+                                        )}
+                                      </div>
+
+                                      {isExpanded && (
+                                        <div className="mt-2 pt-2 border-t border-black/[0.08] space-y-1.5">
+                                          {sectionPreviews.map((section) => (
+                                            <div
+                                              key={section.id}
+                                              className="rounded-md border border-black/[0.08] bg-black/[0.02] px-1.5 py-1"
+                                            >
+                                              <p className="text-[10px] font-semibold text-foreground truncate">{section.name}</p>
+                                              {section.exercises.length > 0 ? (
+                                                <div className="mt-1 space-y-0.5">
+                                                  {section.exercises.map((exercise) => (
+                                                    <div
+                                                      key={exercise.id}
+                                                      draggable={editing}
+                                                      onDragStart={(event) => {
+                                                        if (!editing) return;
+                                                        event.stopPropagation();
+                                                        event.dataTransfer.effectAllowed = "move";
+                                                        setDragPlannerExercise({
+                                                          sourceWorkoutId: entry.workout.id,
+                                                          sourceExerciseId: exercise.id,
+                                                        });
+                                                        setDropPlannerExerciseWorkoutId(null);
+                                                        setDragWorkoutIdx(null);
+                                                        setDropWorkoutTarget(null);
+                                                        setDropWorkoutTailColumn(null);
+                                                      }}
+                                                      onDragEnd={(event) => {
+                                                        event.stopPropagation();
+                                                        resetPlannerExerciseDragState();
+                                                      }}
+                                                      className={`text-[10px] truncate rounded px-1 py-0.5 transition-colors ${
+                                                        editing
+                                                          ? "cursor-grab text-foreground hover:bg-black/[0.05]"
+                                                          : "text-muted"
+                                                      }`}
+                                                      title={editing ? "Drag to another session" : undefined}
+                                                    >
+                                                      {exercise.name}
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              ) : (
+                                                <p className="mt-1 text-[10px] text-muted italic">No exercises</p>
+                                              )}
+                                            </div>
+                                          ))}
+
+                                          {unsectionedExercises.length > 0 && (
+                                            <div className="rounded-md border border-black/[0.08] bg-black/[0.02] px-1.5 py-1">
+                                              <p className="text-[10px] font-semibold text-foreground">Unsectioned</p>
                                               <div className="mt-1 space-y-0.5">
-                                                {section.exercises.map((exercise) => (
+                                                {unsectionedExercises.map((exercise) => (
                                                   <div
                                                     key={exercise.id}
                                                     draggable={editing}
@@ -1950,96 +2608,320 @@ export function SessionBuilder({
                                                   </div>
                                                 ))}
                                               </div>
-                                            ) : (
-                                              <p className="mt-1 text-[10px] text-muted italic">No exercises</p>
-                                            )}
-                                          </div>
-                                        ))}
-
-                                        {unsectionedExercises.length > 0 && (
-                                          <div className="rounded-md border border-black/[0.08] bg-black/[0.02] px-1.5 py-1">
-                                            <p className="text-[10px] font-semibold text-foreground">Unsectioned</p>
-                                            <div className="mt-1 space-y-0.5">
-                                              {unsectionedExercises.map((exercise) => (
-                                                <div
-                                                  key={exercise.id}
-                                                  draggable={editing}
-                                                  onDragStart={(event) => {
-                                                    if (!editing) return;
-                                                    event.stopPropagation();
-                                                    event.dataTransfer.effectAllowed = "move";
-                                                    setDragPlannerExercise({
-                                                      sourceWorkoutId: entry.workout.id,
-                                                      sourceExerciseId: exercise.id,
-                                                    });
-                                                    setDropPlannerExerciseWorkoutId(null);
-                                                    setDragWorkoutIdx(null);
-                                                    setDropWorkoutTarget(null);
-                                                    setDropWorkoutTailColumn(null);
-                                                  }}
-                                                  onDragEnd={(event) => {
-                                                    event.stopPropagation();
-                                                    resetPlannerExerciseDragState();
-                                                  }}
-                                                  className={`text-[10px] truncate rounded px-1 py-0.5 transition-colors ${
-                                                    editing
-                                                      ? "cursor-grab text-foreground hover:bg-black/[0.05]"
-                                                      : "text-muted"
-                                                  }`}
-                                                  title={editing ? "Drag to another session" : undefined}
-                                                >
-                                                  {exercise.name}
-                                                </div>
-                                              ))}
                                             </div>
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
-                                </div>
-                              );
-                            })}
+                                );
+                              })}
 
-                            {column.entries.length === 0 && (
-                              <div className={`h-16 rounded-md border border-dashed flex items-center justify-center text-[10px] text-muted ${
-                                dropWorkoutTailColumn === column.key ? "border-accent/40 bg-accent/[0.08]" : "border-black/10"
-                              }`}>
-                                {editing ? "Drop session here" : "No sessions"}
-                              </div>
-                            )}
+                              {column.entries.length === 0 && (
+                                <div className={`h-16 rounded-md border border-dashed flex items-center justify-center text-[10px] text-muted ${
+                                  dropWorkoutTailColumn === column.key ? "border-accent/40 bg-accent/[0.08]" : "border-black/10"
+                                }`}>
+                                  {editing ? "Drop session here" : "No sessions"}
+                                </div>
+                              )}
+                            </div>
                           </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {plannerEditorOpen && workout && (
+                      <div className="w-[36rem] max-w-[44%] min-w-[26rem] h-full rounded-lg border border-black/10 bg-white flex flex-col overflow-hidden">
+                        <div className="px-3 py-2 border-b border-black/10 flex items-center gap-2">
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-foreground truncate">{workout.name}</p>
+                            <p className="text-[10px] text-muted">Session Editor</p>
+                          </div>
+                          <div className="flex-1" />
+                          <button
+                            type="button"
+                            onClick={() => setPlannerEditorOpen(false)}
+                            className="p-1.5 rounded text-muted hover:text-foreground hover:bg-black/5 transition-colors"
+                            title="Close editor"
+                          >
+                            <X size={13} />
+                          </button>
                         </div>
-                      ))}
+                        {renderSelectedWorkoutEditor()}
+                      </div>
+                    )}
+                  </div>
+                ) : plannerInsightView === "split_matrix" ? (
+                  <div className="h-full rounded-lg border border-black/[0.08] bg-white/85 overflow-hidden">
+                    <div className="px-3 py-2 border-b border-black/[0.08] bg-black/[0.02] text-xs text-muted">
+                      {splitMatrixMode === "movement" ? "Movement pattern" : "Muscle group"} rows use effective sets
+                      with effort factors (RPE 8+ = 1.0, 7.x = 0.85, 6.x = 0.70, 5.x = 0.55, below 5 or missing = 0.40).
+                    </div>
+                    <div className="h-[calc(100%-2.35rem)] overflow-auto">
+                      {activeSplitRows.length === 0 ? (
+                        <div className="h-full flex items-center justify-center text-sm text-muted">
+                          No exercises found in this phase yet.
+                        </div>
+                      ) : (
+                        <table className="w-full text-xs">
+                          <thead className="sticky top-0 bg-white z-10">
+                            <tr className="border-b border-black/[0.08]">
+                              <th className="px-3 py-2 text-left font-semibold text-muted">
+                                {splitMatrixMode === "movement" ? "Movement Pattern" : "Muscle Group"}
+                              </th>
+                              {plannerInsights.dayColumns.map((column) => (
+                                <th key={column.value} className="px-2 py-2 text-center font-semibold text-muted">
+                                  {column.short}
+                                </th>
+                              ))}
+                              <th className="px-2 py-2 text-center font-semibold text-muted">Weekly</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {activeSplitRows.map((row) => (
+                              <tr key={row.label} className="border-b border-black/[0.06]">
+                                <td className="px-3 py-2 font-medium text-foreground">{row.label}</td>
+                                {row.values.map((value, index) => (
+                                  <td key={`${row.label}-${index}`} className="px-2 py-2 text-center text-foreground">
+                                    {value > 0 ? value.toFixed(1) : "—"}
+                                  </td>
+                                ))}
+                                <td className="px-2 py-2 text-center font-semibold text-foreground">
+                                  {row.total.toFixed(1)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
                     </div>
                   </div>
-
-                  {plannerEditorOpen && workout && (
-                    <div className="w-[36rem] max-w-[44%] min-w-[26rem] h-full rounded-lg border border-black/10 bg-white flex flex-col overflow-hidden">
-                      <div className="px-3 py-2 border-b border-black/10 flex items-center gap-2">
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-foreground truncate">{workout.name}</p>
-                          <p className="text-[10px] text-muted">Session Editor</p>
-                        </div>
-                        <div className="flex-1" />
-                        <button
-                          type="button"
-                          onClick={() => setPlannerEditorOpen(false)}
-                          className="p-1.5 rounded text-muted hover:text-foreground hover:bg-black/5 transition-colors"
-                          title="Close editor"
-                        >
-                          <X size={13} />
-                        </button>
-                      </div>
-                      {renderSelectedWorkoutEditor()}
+                ) : (
+                  <div className="h-full rounded-lg border border-black/[0.08] bg-white/85 overflow-hidden flex flex-col">
+                    <div className="px-3 py-2 border-b border-black/[0.08] bg-black/[0.02] text-xs text-muted flex items-center gap-3">
+                      <span>
+                        Weekly load score: <span className="font-semibold text-foreground">{plannerHeatmapTotal.toFixed(1)}</span>
+                      </span>
+                      <span>
+                        Unscheduled load: <span className="font-semibold text-foreground">{plannerInsights.unscheduledLoadScore.toFixed(1)}</span>
+                      </span>
                     </div>
-                  )}
-                </div>
+                    <div className="flex-1 min-h-0 p-3 grid grid-cols-7 gap-2">
+                      {plannerInsights.dayColumns.map((column, index) => {
+                        const score = plannerInsights.dayLoadScores[index];
+                        const band = resolveHeatmapBand(score);
+                        return (
+                          <div
+                            key={column.value}
+                            className={`rounded-lg border px-2 py-3 flex flex-col items-center justify-center text-center ${heatmapTileClassName[band]}`}
+                          >
+                            <p className="text-[11px] uppercase tracking-wide opacity-80">{column.short}</p>
+                            <p className="text-xl font-bold mt-1">{Math.round(score)}</p>
+                            <p className="text-[11px] mt-1 capitalize">{band.replace("_", " ")}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="px-3 pb-3 pt-1 text-[11px] text-muted flex flex-wrap gap-2">
+                      <span className="px-2 py-1 rounded border border-black/10 bg-white">None: 0</span>
+                      <span className="px-2 py-1 rounded border border-black/10 bg-white">&gt;0-10 Very Light</span>
+                      <span className="px-2 py-1 rounded border border-black/10 bg-white">&gt;10-18 Light</span>
+                      <span className="px-2 py-1 rounded border border-black/10 bg-white">&gt;18-28 Moderate</span>
+                      <span className="px-2 py-1 rounded border border-black/10 bg-white">&gt;28-38 High</span>
+                      <span className="px-2 py-1 rounded border border-black/10 bg-white">&gt;38 Very High</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </>
         )}
       </div>
+
+      {templatesOpen && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/45 backdrop-blur-[1px]"
+            onClick={() => setTemplatesOpen(false)}
+            aria-label="Close section template library"
+          />
+          <div className="relative w-[min(1080px,95vw)] h-[min(80vh,760px)] rounded-2xl border border-black/10 bg-white shadow-2xl overflow-hidden flex flex-col">
+            <div className="px-4 py-3 border-b border-black/10 flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-foreground">Section Template Library</h3>
+              <p className="text-xs text-muted">Apply as snapshot copy appended to the current session.</p>
+              <div className="flex-1" />
+              <button
+                type="button"
+                onClick={() => setTemplatesOpen(false)}
+                className="p-1.5 rounded text-muted hover:text-foreground hover:bg-black/5 transition-colors"
+                title="Close"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_1.2fr]">
+              <div className="border-r border-black/10 min-h-0 flex flex-col">
+                <div className="p-3 border-b border-black/10">
+                  <div className="relative">
+                    <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+                    <input
+                      value={templateSearch}
+                      onChange={(event) => setTemplateSearch(event.target.value)}
+                      placeholder="Search templates, categories, exercises..."
+                      className="w-full pl-8 pr-3 py-2 rounded-lg border border-black/10 bg-black/[0.02] text-sm outline-none focus:border-accent/40"
+                    />
+                  </div>
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
+                  {isLoadingTemplates ? (
+                    <div className="h-full flex items-center justify-center text-sm text-muted">
+                      <Loader2 size={15} className="animate-spin mr-2" /> Loading templates...
+                    </div>
+                  ) : filteredSectionTemplates.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-sm text-muted">
+                      No section templates found.
+                    </div>
+                  ) : (
+                    filteredSectionTemplates.map((template) => {
+                      const isSelected = selectedTemplateId === template.id;
+                      const isBusy = templateBusyId === template.id;
+                      return (
+                        <div
+                          key={template.id}
+                          className={`rounded-lg border p-2.5 transition-colors ${
+                            isSelected ? "border-accent/40 bg-accent/[0.08]" : "border-black/10 bg-black/[0.01]"
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setSelectedTemplateId(template.id)}
+                            className="w-full text-left"
+                          >
+                            <p className="text-sm font-semibold text-foreground truncate">{template.name}</p>
+                            <p className="text-xs text-muted mt-0.5">
+                              {template.category || "Uncategorized"} · {template.exercises.length} exercise
+                              {template.exercises.length === 1 ? "" : "s"}
+                            </p>
+                          </button>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedTemplateId(template.id);
+                                applyTemplateToCurrentWorkout(template);
+                                setTemplatesOpen(false);
+                              }}
+                              disabled={!editing || !workout || isBusy}
+                              className="px-2 py-1 rounded-md bg-accent text-white text-[11px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Apply
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void renameTemplate(template)}
+                              disabled={isBusy}
+                              className="px-2 py-1 rounded-md border border-black/10 text-[11px] text-muted hover:text-foreground hover:border-accent/30 transition-colors"
+                            >
+                              Rename
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void recategorizeTemplate(template)}
+                              disabled={isBusy}
+                              className="px-2 py-1 rounded-md border border-black/10 text-[11px] text-muted hover:text-foreground hover:border-accent/30 transition-colors"
+                            >
+                              Category
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void removeTemplate(template.id)}
+                              disabled={isBusy}
+                              className="px-2 py-1 rounded-md border border-red-200 text-[11px] text-red-600 hover:bg-red-50 transition-colors"
+                            >
+                              Delete
+                            </button>
+                            {isBusy && (
+                              <span className="inline-flex items-center gap-1 text-[11px] text-muted">
+                                <Loader2 size={11} className="animate-spin" />
+                                {templateBusyLabel || "Saving..."}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              <div className="min-h-0 flex flex-col">
+                <div className="px-4 py-3 border-b border-black/10 flex items-center gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">Preview</p>
+                  <div className="flex-1" />
+                  <button
+                    type="button"
+                    onClick={applySelectedTemplate}
+                    disabled={!editing || !workout || !selectedTemplate}
+                    className="px-2.5 py-1.5 rounded-lg bg-accent text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Apply To Session
+                  </button>
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto p-4">
+                  {selectedTemplate ? (
+                    <div className="space-y-3">
+                      <div>
+                        <h4 className="text-sm font-semibold text-foreground">{selectedTemplate.name}</h4>
+                        <p className="text-xs text-muted mt-0.5">
+                          {selectedTemplate.category || "Uncategorized"} · {selectedTemplate.exercises.length} exercise
+                          {selectedTemplate.exercises.length === 1 ? "" : "s"}
+                        </p>
+                        {selectedTemplate.notes && (
+                          <p className="mt-2 text-xs text-foreground whitespace-pre-wrap">
+                            {selectedTemplate.notes}
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        {selectedTemplate.exercises
+                          .slice()
+                          .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+                          .map((exercise) => (
+                            <div
+                              key={`${selectedTemplate.id}-${exercise.id}`}
+                              className="rounded-lg border border-black/10 bg-black/[0.02] p-2"
+                            >
+                              <p className="text-xs font-semibold text-foreground">{exercise.name}</p>
+                              <p className="text-[11px] text-muted mt-1">
+                                {exercise.tracking_type} · {exercise.set_data.length > 0 ? exercise.set_data.length : exercise.sets} sets
+                              </p>
+                              {exercise.notes && (
+                                <p className="text-[11px] text-muted mt-1 line-clamp-3 whitespace-pre-wrap">
+                                  {exercise.notes}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="h-full flex items-center justify-center text-sm text-muted">
+                      Select a template to preview it.
+                    </div>
+                  )}
+                </div>
+                {templateError && (
+                  <div className="px-4 py-2 border-t border-black/10 text-xs text-red-600 bg-red-50">
+                    {templateError}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Exercise Editor Modal */}
       {isExEditorOpen && (

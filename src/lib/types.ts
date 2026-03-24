@@ -580,6 +580,8 @@ export type ClientSubTab = "overview" | "workouts" | "nutrition" | "progress" | 
 export type ClientProgramStatus = "active" | "inactive";
 
 export type ClientWorkoutView = "list" | "phases" | "builder";
+export type PlannerInsightView = "sessions" | "split_matrix" | "load_heatmap";
+export type PlannerSplitMatrixMode = "movement" | "muscle";
 
 export interface SetData {
   id: number;
@@ -599,6 +601,40 @@ export interface WorkoutExerciseWithSets extends WorkoutExercise {
   tracking_type: SetType;
   alternate_exercise_ids: number[];
   whiteboard_video_urls?: string[];
+}
+
+export interface WorkoutSectionTemplateExercise {
+  id: number;
+  template_id: number;
+  sort_order: number;
+  exercise_id: number | null;
+  name: string;
+  muscle_group: string | null;
+  tracking_type: SetType;
+  sets: number;
+  weight: number;
+  min_reps: number;
+  max_reps: number;
+  rest_seconds: number;
+  pct_1rm: number;
+  rpe: number;
+  calories: number;
+  duration: string;
+  distance: string;
+  notes: string | null;
+  set_data: SetData[];
+  whiteboard_video_urls: string[];
+}
+
+export interface WorkoutSectionTemplate {
+  id: number;
+  coach_id: string;
+  name: string;
+  category: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  exercises: WorkoutSectionTemplateExercise[];
 }
 
 export interface PhaseWorkoutWithSections extends PhaseWorkout {

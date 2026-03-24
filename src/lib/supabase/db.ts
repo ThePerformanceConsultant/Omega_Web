@@ -2381,13 +2381,74 @@ export async function deleteExercise(id: number) {
 import type {
   WorkoutSection,
   SetData,
+  SetType,
   WorkoutExerciseWithSets,
+  WorkoutSectionTemplate,
+  WorkoutSectionTemplateExercise,
   PhaseWorkoutWithSections,
   ProgramPhaseWithWorkouts,
   ProgramWithPhases,
 } from "../types";
 
 const WHITEBOARD_VIDEO_META_PREFIX = "__omega_whiteboard_videos__:";
+
+function fromDbWorkoutSectionTemplateExercise(row: any): WorkoutSectionTemplateExercise {
+  const parsedSetData = Array.isArray(row.set_data)
+    ? row.set_data.map((setRow: any, index: number): SetData => {
+        const base: SetData = {
+          ...(typeof setRow === "object" && setRow ? setRow : {}),
+          id: Number(setRow?.id ?? Date.now() + index),
+          set_number: Number(setRow?.set_number ?? index + 1),
+          weight: Number(setRow?.weight ?? 0),
+          min_reps: Number(setRow?.min_reps ?? 0),
+          max_reps: Number(setRow?.max_reps ?? 0),
+          rest_seconds: Number(setRow?.rest_seconds ?? 90),
+          done: Boolean(setRow?.done ?? false),
+        };
+        return base;
+      })
+    : [];
+
+  return {
+    id: Number(row.id),
+    template_id: Number(row.template_id),
+    sort_order: Number(row.sort_order ?? 0),
+    exercise_id: row.exercise_id != null ? Number(row.exercise_id) : null,
+    name: row.name ?? "",
+    muscle_group: row.muscle_group ?? null,
+    tracking_type: (row.tracking_type ?? "Weight/Reps/RPE") as SetType,
+    sets: Number(row.sets ?? 0),
+    weight: Number(row.weight ?? 0),
+    min_reps: Number(row.min_reps ?? 0),
+    max_reps: Number(row.max_reps ?? 0),
+    rest_seconds: Number(row.rest_seconds ?? 90),
+    pct_1rm: Number(row.pct_1rm ?? 0),
+    rpe: Number(row.rpe ?? 0),
+    calories: Number(row.calories ?? 0),
+    duration: row.duration ?? "",
+    distance: row.distance ?? "",
+    notes: row.notes ?? null,
+    set_data: parsedSetData,
+    whiteboard_video_urls: Array.isArray(row.whiteboard_video_urls)
+      ? row.whiteboard_video_urls.filter((value: unknown) => typeof value === "string" && value.trim().length > 0)
+      : [],
+  };
+}
+
+function fromDbWorkoutSectionTemplate(row: any): WorkoutSectionTemplate {
+  return {
+    id: Number(row.id),
+    coach_id: row.coach_id,
+    name: row.name ?? "",
+    category: row.category ?? null,
+    notes: row.notes ?? null,
+    created_at: row.created_at ?? new Date().toISOString(),
+    updated_at: row.updated_at ?? new Date().toISOString(),
+    exercises: (row.workout_section_template_exercises ?? [])
+      .sort((a: any, b: any) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
+      .map(fromDbWorkoutSectionTemplateExercise),
+  };
+}
 
 function parseWhiteboardVideoUrls(raw: unknown): string[] {
   if (typeof raw !== "string") return [];
@@ -2417,6 +2478,190 @@ function serializeWhiteboardVideoUrls(urls: unknown): string | null {
   );
   if (clean.length === 0) return null;
   return `${WHITEBOARD_VIDEO_META_PREFIX}${JSON.stringify(clean)}`;
+}
+
+function isUuidLike(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+async function resolveWorkoutTemplateCoachId(coachId?: string): Promise<string> {
+  if (coachId && isUuidLike(coachId)) return coachId;
+  const resolved = await getCoachId();
+  if (!resolved) {
+    throw new Error("No authenticated coach session.");
+  }
+  return resolved;
+}
+
+function toDbWorkoutSectionTemplateExerciseRow(
+  templateId: number,
+  exercise: WorkoutSectionTemplateExercise,
+  sortOrder: number
+) {
+  const setData = Array.isArray(exercise.set_data)
+    ? exercise.set_data.map((setRow, index) => ({
+        ...(typeof setRow === "object" && setRow ? setRow : {}),
+        id: Number(setRow.id ?? index + 1),
+        set_number: Number(setRow.set_number ?? index + 1),
+        weight: Number(setRow.weight ?? 0),
+        min_reps: Number(setRow.min_reps ?? 0),
+        max_reps: Number(setRow.max_reps ?? 0),
+        rest_seconds: Number(setRow.rest_seconds ?? 90),
+        pct_1rm: Number((setRow as Record<string, unknown>).pct_1rm ?? 0),
+        rpe: Number((setRow as Record<string, unknown>).rpe ?? 0),
+        calories: Number((setRow as Record<string, unknown>).calories ?? 0),
+        duration: String((setRow as Record<string, unknown>).duration ?? ""),
+        distance: String((setRow as Record<string, unknown>).distance ?? ""),
+        done: Boolean(setRow.done ?? false),
+      }))
+    : [];
+
+  const whiteboardVideoUrls = Array.isArray(exercise.whiteboard_video_urls)
+    ? Array.from(
+        new Set(
+          exercise.whiteboard_video_urls
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0)
+        )
+      )
+    : [];
+
+  return {
+    template_id: templateId,
+    sort_order: sortOrder,
+    exercise_id: exercise.exercise_id,
+    name: exercise.name,
+    muscle_group: exercise.muscle_group,
+    tracking_type: exercise.tracking_type,
+    sets: Number(exercise.sets ?? setData.length),
+    weight: Number(exercise.weight ?? 0),
+    min_reps: Number(exercise.min_reps ?? 0),
+    max_reps: Number(exercise.max_reps ?? 0),
+    rest_seconds: Number(exercise.rest_seconds ?? 90),
+    pct_1rm: Number(exercise.pct_1rm ?? 0),
+    rpe: Number(exercise.rpe ?? 0),
+    calories: Number(exercise.calories ?? 0),
+    duration: exercise.duration ?? "",
+    distance: exercise.distance ?? "",
+    notes: exercise.notes ?? null,
+    set_data: setData,
+    whiteboard_video_urls: whiteboardVideoUrls,
+  };
+}
+
+export async function fetchWorkoutSectionTemplates(coachId?: string): Promise<WorkoutSectionTemplate[]> {
+  if (!isSupabaseConfigured()) return [];
+  const client = getClient();
+  const resolvedCoachId = await resolveWorkoutTemplateCoachId(coachId);
+
+  const { data, error } = await client
+    .from("workout_section_templates")
+    .select(`
+      *,
+      workout_section_template_exercises (*)
+    `)
+    .eq("coach_id", resolvedCoachId)
+    .order("name", { ascending: true });
+  if (error) throw error;
+
+  return (data ?? []).map(fromDbWorkoutSectionTemplate);
+}
+
+type SaveWorkoutSectionTemplateInput = {
+  id?: number;
+  name: string;
+  category?: string | null;
+  notes?: string | null;
+  exercises: WorkoutSectionTemplateExercise[];
+};
+
+export async function saveWorkoutSectionTemplate(
+  template: SaveWorkoutSectionTemplateInput,
+  coachId?: string
+): Promise<WorkoutSectionTemplate> {
+  if (!isSupabaseConfigured()) {
+    throw new Error("Supabase is not configured.");
+  }
+  const client = getClient();
+  const resolvedCoachId = await resolveWorkoutTemplateCoachId(coachId);
+
+  const cleanedName = template.name.trim();
+  if (!cleanedName) {
+    throw new Error("Template name is required.");
+  }
+
+  const cleanedCategory = template.category?.trim() || null;
+  const cleanedNotes = template.notes?.trim() || null;
+
+  const isUpdate = Number.isFinite(template.id) && Number(template.id) > 0;
+  let templateId: number;
+
+  if (isUpdate) {
+    templateId = Number(template.id);
+    const { error } = await client
+      .from("workout_section_templates")
+      .update({
+        name: cleanedName,
+        category: cleanedCategory,
+        notes: cleanedNotes,
+      })
+      .eq("id", templateId)
+      .eq("coach_id", resolvedCoachId);
+    if (error) throw error;
+
+    const { error: deleteExercisesError } = await client
+      .from("workout_section_template_exercises")
+      .delete()
+      .eq("template_id", templateId);
+    if (deleteExercisesError) throw deleteExercisesError;
+  } else {
+    const { data, error } = await client
+      .from("workout_section_templates")
+      .insert({
+        coach_id: resolvedCoachId,
+        name: cleanedName,
+        category: cleanedCategory,
+        notes: cleanedNotes,
+      })
+      .select("id")
+      .single();
+    if (error) throw error;
+    templateId = Number(data.id);
+  }
+
+  const exerciseRows = (template.exercises ?? []).map((exercise, index) =>
+    toDbWorkoutSectionTemplateExerciseRow(templateId, exercise, index)
+  );
+
+  if (exerciseRows.length > 0) {
+    const { error } = await client
+      .from("workout_section_template_exercises")
+      .insert(exerciseRows);
+    if (error) throw error;
+  }
+
+  const { data: fullData, error: fetchError } = await client
+    .from("workout_section_templates")
+    .select(`
+      *,
+      workout_section_template_exercises (*)
+    `)
+    .eq("id", templateId)
+    .single();
+  if (fetchError) throw fetchError;
+  return fromDbWorkoutSectionTemplate(fullData);
+}
+
+export async function deleteWorkoutSectionTemplate(id: number): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    throw new Error("Supabase is not configured.");
+  }
+  const client = getClient();
+  const { error } = await client
+    .from("workout_section_templates")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
 }
 
 function fromDbProgram(row: any): ProgramWithPhases {
