@@ -512,7 +512,7 @@ export function WorkoutsTab({ clientId }: { clientId: string }) {
   // ─── BUILDER VIEW — uses shared SessionBuilder component ───
   if (view === "builder" && prog && phase && selectedCp) {
     return (
-      <div className="h-[calc(100vh-280px)] -mx-4 rounded-xl overflow-hidden border border-black/10">
+      <div className="h-[calc(100vh-280px)] min-h-0 -mx-4 rounded-xl overflow-hidden border border-black/10">
         <SessionBuilder
           program={prog}
           phaseIdx={phaseIdx}

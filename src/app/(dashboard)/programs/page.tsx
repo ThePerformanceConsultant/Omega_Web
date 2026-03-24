@@ -414,7 +414,7 @@ export default function ProgramsPage() {
   // SESSION BUILDER VIEW — now uses shared component
   // =========================================
   return (
-    <div className="h-[calc(100vh-65px)] -m-6">
+    <div className="h-[calc(100vh-65px)] min-h-0 -m-6 overflow-hidden">
       <SessionBuilder
         program={prog}
         phaseIdx={phaseIdx}
