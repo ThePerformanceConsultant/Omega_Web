@@ -44,6 +44,16 @@ import {
   deleteCoachInsight,
   fetchCoachInsightSettings,
   upsertCoachInsightSettings,
+  fetchCurriculumPrograms,
+  upsertCurriculumProgram,
+  fetchCurriculumWeeks,
+  upsertCurriculumWeek,
+  fetchCurriculumTouchpoints,
+  upsertCurriculumTouchpoints,
+  fetchCoachCurriculumOverview,
+  enrollClientInCurriculum,
+  pauseCurriculumEnrollment,
+  resumeCurriculumEnrollment,
 } from "@/lib/supabase/db";
 import type {
   VaultSection,
@@ -54,6 +64,10 @@ import type {
   CoachInsight,
   CoachInsightSettings,
   InsightCadenceUnit,
+  CurriculumProgram,
+  CurriculumWeek,
+  CurriculumTouchpoint,
+  CoachCurriculumOverviewItem,
 } from "@/lib/types";
 
 // ─── Helpers ───
@@ -85,6 +99,9 @@ function fromDbFolder(row: Record<string, unknown>): VaultFolder {
     dripEnabled: (row.drip_enabled as boolean) ?? false,
     dripIntervalDays: (row.drip_interval_days as number | null) ?? null,
     createdAt: row.created_at as string,
+    isLocked: Boolean(row.is_locked ?? false),
+    unlockAt: (row.unlock_at as string | null) ?? null,
+    unlockWeek: row.unlock_week != null ? Number(row.unlock_week) : null,
   };
 }
 
@@ -102,6 +119,9 @@ function fromDbItem(row: Record<string, unknown>): VaultItem {
     fileSize: (row.file_size as number | null) ?? null,
     sortOrder: (row.sort_order as number) ?? 0,
     createdAt: row.created_at as string,
+    isLocked: Boolean(row.is_locked ?? false),
+    unlockAt: (row.unlock_at as string | null) ?? null,
+    unlockWeek: row.unlock_week != null ? Number(row.unlock_week) : null,
   };
 }
 
@@ -159,6 +179,90 @@ function getMaxDepth(section: VaultSection): number {
   // Resources: root(0) → folder(1) → sub-folder(2) → items only
   // Courses:   root(0) → course(1) → module(2) → lesson(3) → items only
   return section === "resources" ? 2 : 3;
+}
+
+function buildDefaultCurriculumTouchpoints(): Array<{
+  kind: CurriculumTouchpoint["kind"];
+  dayOffset: number;
+  localTime: string;
+  payloadJson?: Record<string, unknown>;
+  isRequired?: boolean;
+  isEnabled?: boolean;
+  sortOrder?: number;
+}> {
+  return [
+    {
+      kind: "unlock_content",
+      dayOffset: 0,
+      localTime: "06:00",
+      payloadJson: {},
+      isRequired: false,
+      isEnabled: true,
+      sortOrder: 10,
+    },
+    {
+      kind: "kickoff_message",
+      dayOffset: 0,
+      localTime: "08:00",
+      payloadJson: {
+        template:
+          "Week {{week_number}} starts today. Focus: {{focus_outcome}}. Your lecture: {{lecture_title}}.",
+      },
+      isRequired: true,
+      isEnabled: true,
+      sortOrder: 20,
+    },
+    {
+      kind: "assign_quiz",
+      dayOffset: 2,
+      localTime: "12:00",
+      payloadJson: { due_day_offset: 4, due_local_time: "20:00" },
+      isRequired: true,
+      isEnabled: true,
+      sortOrder: 30,
+    },
+    {
+      kind: "nudge_message",
+      dayOffset: 3,
+      localTime: "12:30",
+      payloadJson: {
+        template:
+          "Mid-week reminder for {{theme_title}}. Quiz due {{quiz_due_local}}.",
+      },
+      isRequired: false,
+      isEnabled: true,
+      sortOrder: 40,
+    },
+    {
+      kind: "assign_action_tasks",
+      dayOffset: 4,
+      localTime: "09:00",
+      payloadJson: { due_day_offset: 6, due_local_time: "20:00" },
+      isRequired: true,
+      isEnabled: true,
+      sortOrder: 50,
+    },
+    {
+      kind: "assign_reflection",
+      dayOffset: 5,
+      localTime: "09:00",
+      payloadJson: { due_day_offset: 6, due_local_time: "20:00" },
+      isRequired: true,
+      isEnabled: true,
+      sortOrder: 60,
+    },
+    {
+      kind: "recap_message",
+      dayOffset: 6,
+      localTime: "18:00",
+      payloadJson: {
+        template: "Week {{week_number}} recap for {{theme_title}}.",
+      },
+      isRequired: false,
+      isEnabled: true,
+      sortOrder: 70,
+    },
+  ];
 }
 
 // ─── Create / Edit Folder Modal ───
@@ -926,7 +1030,7 @@ function InsightCard({
 // ─── Main Page ───
 
 type BreadcrumbEntry = { id: number; name: string };
-type VaultTab = VaultSection | "insights";
+type VaultTab = VaultSection | "insights" | "curriculum";
 
 export default function VaultPage() {
   const [coachId, setCoachId] = useState<string | null>(null);
@@ -936,6 +1040,24 @@ export default function VaultPage() {
   const [items, setItems] = useState<VaultItem[]>([]);
   const [insights, setInsights] = useState<CoachInsight[]>([]);
   const [insightSettings, setInsightSettings] = useState<CoachInsightSettings | null>(null);
+  const [curriculumPrograms, setCurriculumPrograms] = useState<CurriculumProgram[]>([]);
+  const [curriculumWeeks, setCurriculumWeeks] = useState<CurriculumWeek[]>([]);
+  const [curriculumTouchpoints, setCurriculumTouchpoints] = useState<CurriculumTouchpoint[]>([]);
+  const [curriculumOverview, setCurriculumOverview] = useState<CoachCurriculumOverviewItem[]>([]);
+  const [selectedProgramId, setSelectedProgramId] = useState<number | null>(null);
+  const [selectedWeekNumber, setSelectedWeekNumber] = useState(1);
+  const [programDraftName, setProgramDraftName] = useState("16-Week Curriculum");
+  const [programDraftDuration, setProgramDraftDuration] = useState(16);
+  const [isSavingProgram, setIsSavingProgram] = useState(false);
+  const [isSavingWeek, setIsSavingWeek] = useState(false);
+  const [weekDraftTheme, setWeekDraftTheme] = useState("");
+  const [weekDraftOutcome, setWeekDraftOutcome] = useState("");
+  const [weekDraftLectureFolderId, setWeekDraftLectureFolderId] = useState<number | null>(null);
+  const [weekDraftSummary, setWeekDraftSummary] = useState("");
+  const [enrollClientId, setEnrollClientId] = useState("");
+  const [enrollTimezone, setEnrollTimezone] = useState("Europe/London");
+  const [enrollStartDate, setEnrollStartDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [isEnrolling, setIsEnrolling] = useState(false);
   const [loading, setLoading] = useState(true);
   const [clients, setClients] = useState<Client[]>([]);
   const [courseAccessCounts, setCourseAccessCounts] = useState<Record<string, number>>({});
@@ -951,12 +1073,13 @@ export default function VaultPage() {
   const [courseAccessTarget, setCourseAccessTarget] = useState<{ id: number; name: string } | null>(null);
 
   const isInsightsTab = activeTab === "insights";
+  const isCurriculumTab = activeTab === "curriculum";
   const currentFolderId = folderPath.length > 0 ? folderPath[folderPath.length - 1].id : null;
   const depth = folderPath.length;
-  const maxDepth = !isInsightsTab ? getMaxDepth(activeTab) : 0;
-  const canCreateSubfolder = !isInsightsTab && depth < maxDepth;
-  const canAddItem = !isInsightsTab && depth > 0;
-  const isInsideFolder = !isInsightsTab && depth > 0;
+  const maxDepth = !isInsightsTab && !isCurriculumTab ? getMaxDepth(activeTab as VaultSection) : 0;
+  const canCreateSubfolder = !isInsightsTab && !isCurriculumTab && depth < maxDepth;
+  const canAddItem = !isInsightsTab && !isCurriculumTab && depth > 0;
+  const isInsideFolder = !isInsightsTab && !isCurriculumTab && depth > 0;
 
   // ─── Load data ───
 
@@ -983,6 +1106,49 @@ export default function VaultPage() {
         }
         setFolders([]);
         setItems([]);
+        return;
+      }
+
+      if (activeTab === "curriculum") {
+        const [programs, overview] = await Promise.all([
+          fetchCurriculumPrograms(),
+          fetchCoachCurriculumOverview(coachId ?? undefined),
+        ]);
+        setCurriculumPrograms(programs);
+        setCurriculumOverview(overview);
+        setInsights([]);
+        setFolders([]);
+        setItems([]);
+
+        const effectiveProgramId = selectedProgramId ?? programs[0]?.id ?? null;
+        setSelectedProgramId(effectiveProgramId);
+
+        if (!effectiveProgramId) {
+          setCurriculumWeeks([]);
+          setCurriculumTouchpoints([]);
+          return;
+        }
+
+        const weeks = await fetchCurriculumWeeks(effectiveProgramId);
+        setCurriculumWeeks(weeks);
+
+        const effectiveWeekNumber =
+          weeks.find((week) => week.weekNumber === selectedWeekNumber)?.weekNumber ??
+          weeks[0]?.weekNumber ??
+          1;
+        setSelectedWeekNumber(effectiveWeekNumber);
+
+        const selectedWeek = weeks.find((week) => week.weekNumber === effectiveWeekNumber) ?? null;
+        if (selectedWeek) {
+          setWeekDraftTheme(selectedWeek.themeTitle);
+          setWeekDraftOutcome(selectedWeek.focusOutcome ?? "");
+          setWeekDraftSummary(selectedWeek.summaryPrompt ?? "");
+          setWeekDraftLectureFolderId(selectedWeek.lectureFolderId ?? null);
+          const touchpoints = await fetchCurriculumTouchpoints(selectedWeek.id);
+          setCurriculumTouchpoints(touchpoints);
+        } else {
+          setCurriculumTouchpoints([]);
+        }
         return;
       }
 
@@ -1034,7 +1200,7 @@ export default function VaultPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeTab, currentFolderId, coachId]);
+  }, [activeTab, currentFolderId, coachId, selectedProgramId, selectedWeekNumber]);
 
   useEffect(() => {
     getCoachId().then((id) => {
@@ -1048,6 +1214,22 @@ export default function VaultPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    const selected = curriculumPrograms.find((program) => program.id === selectedProgramId);
+    if (!selected) return;
+    setProgramDraftName(selected.name);
+    setProgramDraftDuration(selected.durationWeeks);
+  }, [curriculumPrograms, selectedProgramId]);
+
+  useEffect(() => {
+    const selected = curriculumWeeks.find((week) => week.weekNumber === selectedWeekNumber);
+    if (!selected) return;
+    setWeekDraftTheme(selected.themeTitle);
+    setWeekDraftOutcome(selected.focusOutcome ?? "");
+    setWeekDraftSummary(selected.summaryPrompt ?? "");
+    setWeekDraftLectureFolderId(selected.lectureFolderId ?? null);
+  }, [curriculumWeeks, selectedWeekNumber]);
 
   // Tab switching is handled in switchTab() — no separate effect needed
 
@@ -1070,7 +1252,7 @@ export default function VaultPage() {
 
   async function handleSaveFolder(name: string, description: string) {
     if (!coachId) return;
-    if (activeTab === "insights") return;
+    if (activeTab === "insights" || activeTab === "curriculum") return;
     if (editingFolder) {
       await updateVaultFolder(Number(editingFolder.id), { name, description: description || null });
     } else {
@@ -1173,12 +1355,93 @@ export default function VaultPage() {
     if (url) window.open(url, "_blank");
   }
 
+  const selectedProgram = curriculumPrograms.find((program) => program.id === selectedProgramId) ?? null;
+  const selectedWeek = curriculumWeeks.find((week) => week.weekNumber === selectedWeekNumber) ?? null;
+
+  async function handleSaveCurriculumProgram() {
+    setIsSavingProgram(true);
+    try {
+      const saved = await upsertCurriculumProgram({
+        id: selectedProgram?.id ?? null,
+        name: programDraftName.trim() || "16-Week Curriculum",
+        durationWeeks: Math.max(1, Math.min(programDraftDuration || 16, 104)),
+        isActive: true,
+        seedDefaults: true,
+      });
+      if (saved) {
+        setSelectedProgramId(saved.id);
+        setProgramDraftName(saved.name);
+        setProgramDraftDuration(saved.durationWeeks);
+      }
+      await loadData();
+    } finally {
+      setIsSavingProgram(false);
+    }
+  }
+
+  async function handleSaveCurriculumWeek() {
+    if (!selectedProgramId) return;
+    setIsSavingWeek(true);
+    try {
+      const savedWeek = await upsertCurriculumWeek({
+        id: selectedWeek?.id ?? null,
+        programId: selectedProgramId,
+        weekNumber: selectedWeekNumber,
+        themeTitle: weekDraftTheme.trim() || `Week ${selectedWeekNumber} Focus`,
+        focusOutcome: weekDraftOutcome.trim() || null,
+        lectureFolderId: weekDraftLectureFolderId,
+        summaryPrompt: weekDraftSummary.trim() || null,
+        seedTouchpoints: true,
+      });
+      if (savedWeek) {
+        const touchpoints = await fetchCurriculumTouchpoints(savedWeek.id);
+        setCurriculumTouchpoints(touchpoints);
+      }
+      await loadData();
+    } finally {
+      setIsSavingWeek(false);
+    }
+  }
+
+  async function handleResetCurriculumTouchpoints() {
+    if (!selectedWeek) return;
+    await upsertCurriculumTouchpoints(selectedWeek.id, buildDefaultCurriculumTouchpoints());
+    const touchpoints = await fetchCurriculumTouchpoints(selectedWeek.id);
+    setCurriculumTouchpoints(touchpoints);
+  }
+
+  async function handleEnrollClient() {
+    if (!enrollClientId || !selectedProgramId) return;
+    setIsEnrolling(true);
+    try {
+      await enrollClientInCurriculum({
+        clientId: enrollClientId,
+        programId: selectedProgramId,
+        startDate: enrollStartDate,
+        timezone: enrollTimezone || null,
+      });
+      await loadData();
+    } finally {
+      setIsEnrolling(false);
+    }
+  }
+
+  async function handlePauseResume(item: CoachCurriculumOverviewItem) {
+    if (item.enrollmentStatus === "active") {
+      await pauseCurriculumEnrollment(item.enrollmentId);
+    } else if (item.enrollmentStatus === "paused") {
+      await resumeCurriculumEnrollment(item.enrollmentId);
+    }
+    await loadData();
+  }
+
   // ─── Render ───
 
   const tabOptions: { value: VaultTab; label: string; icon: typeof Library }[] = [
     { value: "resources", label: "Resources", icon: Library },
     { value: "courses", label: "Courses", icon: GraduationCap },
     { value: "insights", label: "Insights", icon: Lightbulb },
+    { value: "curriculum", label: "Curriculum", icon: RefreshCw },
   ];
 
   return (
@@ -1198,6 +1461,12 @@ export default function VaultPage() {
                   setFolders([]);
                   setItems([]);
                   setInsights([]);
+                  if (tab.value !== "curriculum") {
+                    setCurriculumPrograms([]);
+                    setCurriculumWeeks([]);
+                    setCurriculumTouchpoints([]);
+                    setCurriculumOverview([]);
+                  }
                 }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   activeTab === tab.value
@@ -1349,6 +1618,289 @@ export default function VaultPage() {
               ))}
             </div>
           )}
+        </div>
+      ) : isCurriculumTab ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="glass-card p-5 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Curriculum Program</h3>
+                  <p className="text-xs text-muted">Create and manage your canonical 16-week structure.</p>
+                </div>
+                <button
+                  onClick={handleSaveCurriculumProgram}
+                  disabled={isSavingProgram}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-accent/30 text-accent text-xs font-medium hover:bg-accent/5 disabled:opacity-50"
+                >
+                  {isSavingProgram ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                  Save Program
+                </button>
+              </div>
+
+              <label className="block text-xs text-muted">
+                Existing program
+                <select
+                  value={selectedProgramId ?? ""}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    setSelectedProgramId(Number.isFinite(next) && next > 0 ? next : null);
+                  }}
+                  className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
+                >
+                  <option value="">Create new program</option>
+                  {curriculumPrograms.map((program) => (
+                    <option key={program.id} value={program.id}>
+                      {program.name} ({program.durationWeeks} weeks)
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="block text-xs text-muted">
+                  Program name
+                  <input
+                    value={programDraftName}
+                    onChange={(e) => setProgramDraftName(e.target.value)}
+                    className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
+                  />
+                </label>
+                <label className="block text-xs text-muted">
+                  Duration (weeks)
+                  <input
+                    type="number"
+                    min={1}
+                    max={104}
+                    value={programDraftDuration}
+                    onChange={(e) => setProgramDraftDuration(Math.max(1, Number(e.target.value || 16)))}
+                    className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="glass-card p-5 space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Enroll Client</h3>
+                <p className="text-xs text-muted">Assign a client to the selected curriculum program.</p>
+              </div>
+
+              <label className="block text-xs text-muted">
+                Client
+                <select
+                  value={enrollClientId}
+                  onChange={(e) => setEnrollClientId(e.target.value)}
+                  className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
+                >
+                  <option value="">Select client</option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.full_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="block text-xs text-muted">
+                  Start date
+                  <input
+                    type="date"
+                    value={enrollStartDate}
+                    onChange={(e) => setEnrollStartDate(e.target.value)}
+                    className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
+                  />
+                </label>
+                <label className="block text-xs text-muted">
+                  Timezone
+                  <input
+                    value={enrollTimezone}
+                    onChange={(e) => setEnrollTimezone(e.target.value)}
+                    placeholder="Europe/London"
+                    className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
+                  />
+                </label>
+              </div>
+
+              <button
+                onClick={handleEnrollClient}
+                disabled={!selectedProgramId || !enrollClientId || isEnrolling}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-br from-accent to-accent-light text-white text-sm font-medium disabled:opacity-50"
+              >
+                {isEnrolling ? <RefreshCw size={14} className="animate-spin" /> : <Users size={14} />}
+                Enroll in Program
+              </button>
+            </div>
+          </div>
+
+          <div className="glass-card p-5 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Week Builder</h3>
+                <p className="text-xs text-muted">Edit weekly outcomes and touchpoint defaults.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleResetCurriculumTouchpoints}
+                  disabled={!selectedWeek}
+                  className="px-3 py-2 rounded-lg border border-black/10 text-xs font-medium text-muted hover:text-foreground hover:bg-black/5 disabled:opacity-50"
+                >
+                  Reset Touchpoints
+                </button>
+                <button
+                  onClick={handleSaveCurriculumWeek}
+                  disabled={!selectedProgramId || isSavingWeek}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-accent/30 text-accent text-xs font-medium hover:bg-accent/5 disabled:opacity-50"
+                >
+                  {isSavingWeek ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                  Save Week
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <label className="block text-xs text-muted sm:col-span-1">
+                Week
+                <select
+                  value={selectedWeekNumber}
+                  onChange={(e) => setSelectedWeekNumber(Math.max(1, Number(e.target.value || 1)))}
+                  className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
+                >
+                  {(curriculumWeeks.length > 0
+                    ? curriculumWeeks.map((week) => week.weekNumber)
+                    : Array.from({ length: selectedProgram?.durationWeeks ?? 16 }, (_, i) => i + 1)
+                  ).map((weekNumber) => (
+                    <option key={weekNumber} value={weekNumber}>
+                      Week {weekNumber}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-xs text-muted sm:col-span-3">
+                Theme title
+                <input
+                  value={weekDraftTheme}
+                  onChange={(e) => setWeekDraftTheme(e.target.value)}
+                  placeholder={`Week ${selectedWeekNumber} Focus`}
+                  className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
+                />
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="block text-xs text-muted">
+                Focus outcome
+                <textarea
+                  rows={2}
+                  value={weekDraftOutcome}
+                  onChange={(e) => setWeekDraftOutcome(e.target.value)}
+                  className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none resize-none"
+                />
+              </label>
+              <label className="block text-xs text-muted">
+                Summary prompt
+                <textarea
+                  rows={2}
+                  value={weekDraftSummary}
+                  onChange={(e) => setWeekDraftSummary(e.target.value)}
+                  className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none resize-none"
+                />
+              </label>
+            </div>
+
+            <label className="block text-xs text-muted max-w-xs">
+              Lecture folder ID (Vault)
+              <input
+                type="number"
+                min={1}
+                value={weekDraftLectureFolderId ?? ""}
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  setWeekDraftLectureFolderId(Number.isFinite(next) && next > 0 ? next : null);
+                }}
+                className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
+              />
+            </label>
+
+            <div className="space-y-2">
+              <h4 className="text-xs font-semibold text-muted uppercase tracking-wide">Touchpoints</h4>
+              {curriculumTouchpoints.length === 0 ? (
+                <p className="text-xs text-muted">No touchpoints loaded for this week.</p>
+              ) : (
+                <div className="space-y-2">
+                  {curriculumTouchpoints.map((touchpoint) => (
+                    <div
+                      key={touchpoint.id}
+                      className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-black/10 bg-black/[0.02]"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground">{touchpoint.kind.replaceAll("_", " ")}</p>
+                        <p className="text-xs text-muted">
+                          Day {touchpoint.dayOffset} at {touchpoint.localTime.slice(0, 5)}
+                          {touchpoint.isRequired ? " · required" : ""}
+                        </p>
+                      </div>
+                      <span
+                        className={`text-[10px] px-2 py-1 rounded-full ${
+                          touchpoint.isEnabled ? "bg-emerald-100 text-emerald-700" : "bg-zinc-200 text-zinc-600"
+                        }`}
+                      >
+                        {touchpoint.isEnabled ? "Enabled" : "Disabled"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="glass-card p-5 space-y-4">
+            <h3 className="text-sm font-semibold text-foreground">Client Curriculum Status</h3>
+            {curriculumOverview.length === 0 ? (
+              <p className="text-sm text-muted">No active curriculum enrollments yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {curriculumOverview.map((entry) => (
+                  <div
+                    key={entry.enrollmentId}
+                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-3 py-3 rounded-lg border border-black/10 bg-black/[0.02]"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-foreground">
+                        {entry.clientName} · Week {entry.currentWeek}
+                      </p>
+                      <p className="text-xs text-muted">
+                        {entry.programName} · Score {entry.competencyScore ?? 0} · {entry.outcomeStatus.replaceAll("_", " ")}
+                      </p>
+                      {entry.nextDueAtUtc && (
+                        <p className="text-xs text-muted">
+                          Next due: {new Date(entry.nextDueAtUtc).toLocaleString()}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-[10px] px-2 py-1 rounded-full ${
+                          entry.atRisk ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"
+                        }`}
+                      >
+                        {entry.atRisk ? "At Risk" : "On Track"}
+                      </span>
+                      {(entry.enrollmentStatus === "active" || entry.enrollmentStatus === "paused") && (
+                        <button
+                          onClick={() => handlePauseResume(entry)}
+                          className="px-3 py-1.5 rounded-lg border border-black/10 text-xs font-medium text-muted hover:text-foreground hover:bg-black/5"
+                        >
+                          {entry.enrollmentStatus === "active" ? "Pause" : "Resume"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       ) : folders.length === 0 && items.length === 0 ? (
         <div className="glass-card p-12 text-center">

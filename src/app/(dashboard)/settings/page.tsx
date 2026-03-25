@@ -75,6 +75,21 @@ const notificationFields: Array<{
     label: "Insight Published",
     description: "When a new coach insight rotates onto a client dashboard.",
   },
+  {
+    kind: "curriculum_week_started",
+    label: "Curriculum Week Start",
+    description: "When an automated curriculum week kickoff is delivered.",
+  },
+  {
+    kind: "curriculum_content_unlocked",
+    label: "Curriculum Unlocks",
+    description: "When curriculum-linked lectures/resources are unlocked.",
+  },
+  {
+    kind: "curriculum_at_risk",
+    label: "Curriculum At-Risk Alerts",
+    description: "When a client is flagged at-risk or week-incomplete in curriculum automation.",
+  },
 ];
 
 export default function SettingsPage() {

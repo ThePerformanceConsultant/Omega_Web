@@ -362,6 +362,12 @@ import type {
   SupplementAdherenceLog,
   NutritionDailyNote,
   NutritionDayStatus,
+  CurriculumProgram,
+  CurriculumWeek,
+  CurriculumTouchpoint,
+  CurriculumEnrollment,
+  ClientCurriculumDashboard,
+  CoachCurriculumOverviewItem,
 } from "../types";
 
 /** Optional function that resolves a recipe by ID (from the in-memory recipe store). */
@@ -3459,6 +3465,39 @@ export async function fetchVaultItems(folderId: number) {
   return data ?? [];
 }
 
+export async function fetchClientVaultFolders(
+  section: "resources" | "courses",
+  parentId?: number | null
+) {
+  const client = getClient();
+  const { data, error } = await client.rpc("fetch_client_vault_folders", {
+    p_section: section,
+    p_parent_id: parentId ?? null,
+  });
+  if (error) throw error;
+  return (data ?? []) as Array<Record<string, unknown>>;
+}
+
+export async function fetchClientVaultItems(folderId: number) {
+  const client = getClient();
+  const { data, error } = await client.rpc("fetch_client_vault_items", {
+    p_folder_id: folderId,
+  });
+  if (error) throw error;
+  return (data ?? []) as Array<Record<string, unknown>>;
+}
+
+export async function recordVaultItemView(itemId: number, completed = false) {
+  const client = getClient();
+  const { data, error } = await client.rpc("record_vault_item_view", {
+    p_item_id: itemId,
+    p_completed: completed,
+    p_viewed_at: new Date().toISOString(),
+  });
+  if (error) throw error;
+  return data as Record<string, unknown> | null;
+}
+
 export async function createVaultItem(params: {
   coachId: string;
   folderId: number;
@@ -3982,6 +4021,9 @@ const notificationKinds: NotificationKind[] = [
   "task_completed",
   "workout_completed",
   "checkin_submitted",
+  "curriculum_week_started",
+  "curriculum_content_unlocked",
+  "curriculum_at_risk",
 ];
 
 export function defaultNotificationPrefs(): NotificationPrefs {
@@ -3997,6 +4039,9 @@ export function defaultNotificationPrefs(): NotificationPrefs {
     task_completed: true,
     workout_completed: true,
     checkin_submitted: true,
+    curriculum_week_started: true,
+    curriculum_content_unlocked: true,
+    curriculum_at_risk: true,
   };
 }
 
@@ -4180,6 +4225,369 @@ export async function sendPasswordReset(email: string, redirectTo?: string): Pro
     redirectTo,
   });
   if (error) throw error;
+}
+
+type CurriculumProgramRow = {
+  id: number;
+  coach_id: string;
+  name: string;
+  duration_weeks: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type CurriculumWeekRow = {
+  id: number;
+  program_id: number;
+  week_number: number;
+  theme_title: string;
+  focus_outcome: string | null;
+  lecture_folder_id: number | null;
+  summary_prompt: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type CurriculumTouchpointRow = {
+  id: number;
+  week_id: number;
+  kind: CurriculumTouchpoint["kind"];
+  day_offset: number;
+  local_time: string;
+  payload_json: Record<string, unknown> | null;
+  is_required: boolean;
+  is_enabled: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type CurriculumEnrollmentRow = {
+  id: number;
+  client_id: string;
+  coach_id: string;
+  program_id: number;
+  start_date: string;
+  timezone: string;
+  status: CurriculumEnrollment["status"];
+  paused_from: string | null;
+  resume_on: string | null;
+  current_week_cache: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ClientCurriculumDashboardRow = {
+  enrollment_id: number;
+  program_id: number;
+  program_name: string;
+  week_number: number;
+  week_theme_title: string;
+  focus_outcome: string | null;
+  lecture_folder_id: number | null;
+  week_start_date: string;
+  completion_pct: number;
+  quiz_score: number | null;
+  action_completion_pct: number | null;
+  resource_completion_pct: number | null;
+  reflection_done: boolean;
+  competency_score: number | null;
+  outcome_status: string;
+  next_due_at_utc: string | null;
+  at_risk: boolean;
+};
+
+type CoachCurriculumOverviewRow = {
+  enrollment_id: number;
+  client_id: string;
+  client_name: string;
+  program_id: number;
+  program_name: string;
+  enrollment_status: CurriculumEnrollment["status"];
+  current_week: number;
+  competency_score: number | null;
+  outcome_status: string;
+  next_due_at_utc: string | null;
+  last_delivery_at_utc: string | null;
+  at_risk: boolean;
+};
+
+function mapCurriculumProgramRow(row: CurriculumProgramRow): CurriculumProgram {
+  return {
+    id: Number(row.id),
+    coachId: row.coach_id,
+    name: row.name,
+    durationWeeks: Number(row.duration_weeks),
+    isActive: !!row.is_active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapCurriculumWeekRow(row: CurriculumWeekRow): CurriculumWeek {
+  return {
+    id: Number(row.id),
+    programId: Number(row.program_id),
+    weekNumber: Number(row.week_number),
+    themeTitle: row.theme_title,
+    focusOutcome: row.focus_outcome ?? null,
+    lectureFolderId: row.lecture_folder_id != null ? Number(row.lecture_folder_id) : null,
+    summaryPrompt: row.summary_prompt ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapCurriculumTouchpointRow(row: CurriculumTouchpointRow): CurriculumTouchpoint {
+  return {
+    id: Number(row.id),
+    weekId: Number(row.week_id),
+    kind: row.kind,
+    dayOffset: Number(row.day_offset ?? 0),
+    localTime: row.local_time,
+    payloadJson: (row.payload_json ?? {}) as Record<string, unknown>,
+    isRequired: !!row.is_required,
+    isEnabled: !!row.is_enabled,
+    sortOrder: Number(row.sort_order ?? 0),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapCurriculumEnrollmentRow(row: CurriculumEnrollmentRow): CurriculumEnrollment {
+  return {
+    id: Number(row.id),
+    clientId: row.client_id,
+    coachId: row.coach_id,
+    programId: Number(row.program_id),
+    startDate: row.start_date,
+    timezone: row.timezone,
+    status: row.status,
+    pausedFrom: row.paused_from ?? null,
+    resumeOn: row.resume_on ?? null,
+    currentWeekCache: row.current_week_cache != null ? Number(row.current_week_cache) : null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapClientCurriculumDashboardRow(row: ClientCurriculumDashboardRow): ClientCurriculumDashboard {
+  return {
+    enrollmentId: Number(row.enrollment_id),
+    programId: Number(row.program_id),
+    programName: row.program_name,
+    weekNumber: Number(row.week_number),
+    weekThemeTitle: row.week_theme_title,
+    focusOutcome: row.focus_outcome ?? null,
+    lectureFolderId: row.lecture_folder_id != null ? Number(row.lecture_folder_id) : null,
+    weekStartDate: row.week_start_date,
+    completionPct: Number(row.completion_pct ?? 0),
+    quizScore: row.quiz_score != null ? Number(row.quiz_score) : null,
+    actionCompletionPct: row.action_completion_pct != null ? Number(row.action_completion_pct) : null,
+    resourceCompletionPct: row.resource_completion_pct != null ? Number(row.resource_completion_pct) : null,
+    reflectionDone: !!row.reflection_done,
+    competencyScore: row.competency_score != null ? Number(row.competency_score) : null,
+    outcomeStatus: row.outcome_status,
+    nextDueAtUtc: row.next_due_at_utc ?? null,
+    atRisk: !!row.at_risk,
+  };
+}
+
+function mapCoachCurriculumOverviewRow(row: CoachCurriculumOverviewRow): CoachCurriculumOverviewItem {
+  return {
+    enrollmentId: Number(row.enrollment_id),
+    clientId: row.client_id,
+    clientName: row.client_name,
+    programId: Number(row.program_id),
+    programName: row.program_name,
+    enrollmentStatus: row.enrollment_status,
+    currentWeek: Number(row.current_week),
+    competencyScore: row.competency_score != null ? Number(row.competency_score) : null,
+    outcomeStatus: row.outcome_status,
+    nextDueAtUtc: row.next_due_at_utc ?? null,
+    lastDeliveryAtUtc: row.last_delivery_at_utc ?? null,
+    atRisk: !!row.at_risk,
+  };
+}
+
+export async function upsertCurriculumProgram(input: {
+  id?: number | null;
+  name: string;
+  durationWeeks?: number;
+  isActive?: boolean;
+  seedDefaults?: boolean;
+}): Promise<CurriculumProgram | null> {
+  const client = getClient();
+  const { data, error } = await client.rpc("upsert_curriculum_program", {
+    p_id: input.id ?? null,
+    p_name: input.name,
+    p_duration_weeks: input.durationWeeks ?? 16,
+    p_is_active: input.isActive ?? true,
+    p_seed_defaults: input.seedDefaults ?? true,
+  });
+  if (error) throw error;
+  if (!data) return null;
+  const row = (Array.isArray(data) ? data[0] : data) as CurriculumProgramRow;
+  return row ? mapCurriculumProgramRow(row) : null;
+}
+
+export async function upsertCurriculumWeek(input: {
+  id?: number | null;
+  programId?: number | null;
+  weekNumber: number;
+  themeTitle: string;
+  focusOutcome?: string | null;
+  lectureFolderId?: number | null;
+  summaryPrompt?: string | null;
+  seedTouchpoints?: boolean;
+}): Promise<CurriculumWeek | null> {
+  const client = getClient();
+  const { data, error } = await client.rpc("upsert_curriculum_week", {
+    p_id: input.id ?? null,
+    p_program_id: input.programId ?? null,
+    p_week_number: input.weekNumber,
+    p_theme_title: input.themeTitle,
+    p_focus_outcome: input.focusOutcome ?? null,
+    p_lecture_folder_id: input.lectureFolderId ?? null,
+    p_summary_prompt: input.summaryPrompt ?? null,
+    p_seed_touchpoints: input.seedTouchpoints ?? true,
+  });
+  if (error) throw error;
+  if (!data) return null;
+  const row = (Array.isArray(data) ? data[0] : data) as CurriculumWeekRow;
+  return row ? mapCurriculumWeekRow(row) : null;
+}
+
+export async function upsertCurriculumTouchpoints(
+  weekId: number,
+  touchpoints: Array<{
+    kind: CurriculumTouchpoint["kind"];
+    dayOffset: number;
+    localTime: string;
+    payloadJson?: Record<string, unknown>;
+    isRequired?: boolean;
+    isEnabled?: boolean;
+    sortOrder?: number;
+  }>
+): Promise<number> {
+  const client = getClient();
+  const payload = touchpoints.map((entry) => ({
+    kind: entry.kind,
+    day_offset: entry.dayOffset,
+    local_time: entry.localTime,
+    payload_json: entry.payloadJson ?? {},
+    is_required: entry.isRequired ?? false,
+    is_enabled: entry.isEnabled ?? true,
+    sort_order: entry.sortOrder ?? 0,
+  }));
+  const { data, error } = await client.rpc("upsert_curriculum_touchpoints", {
+    p_week_id: weekId,
+    p_touchpoints: payload,
+  });
+  if (error) throw error;
+  return Number(data ?? 0);
+}
+
+export async function fetchCurriculumPrograms(): Promise<CurriculumProgram[]> {
+  const client = getClient();
+  const { data, error } = await client
+    .from("curriculum_programs")
+    .select("*")
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return ((data ?? []) as CurriculumProgramRow[]).map(mapCurriculumProgramRow);
+}
+
+export async function fetchCurriculumWeeks(programId: number): Promise<CurriculumWeek[]> {
+  const client = getClient();
+  const { data, error } = await client
+    .from("curriculum_weeks")
+    .select("*")
+    .eq("program_id", programId)
+    .order("week_number", { ascending: true });
+  if (error) throw error;
+  return ((data ?? []) as CurriculumWeekRow[]).map(mapCurriculumWeekRow);
+}
+
+export async function fetchCurriculumTouchpoints(weekId: number): Promise<CurriculumTouchpoint[]> {
+  const client = getClient();
+  const { data, error } = await client
+    .from("curriculum_touchpoints")
+    .select("*")
+    .eq("week_id", weekId)
+    .order("sort_order", { ascending: true })
+    .order("id", { ascending: true });
+  if (error) throw error;
+  return ((data ?? []) as CurriculumTouchpointRow[]).map(mapCurriculumTouchpointRow);
+}
+
+export async function enrollClientInCurriculum(input: {
+  clientId: string;
+  programId: number;
+  startDate?: string;
+  timezone?: string | null;
+}): Promise<CurriculumEnrollment | null> {
+  const client = getClient();
+  const { data, error } = await client.rpc("enroll_client_in_curriculum", {
+    p_client_id: input.clientId,
+    p_program_id: input.programId,
+    p_start_date: input.startDate ?? new Date().toISOString().slice(0, 10),
+    p_timezone: input.timezone ?? null,
+  });
+  if (error) throw error;
+  if (!data) return null;
+  const row = (Array.isArray(data) ? data[0] : data) as CurriculumEnrollmentRow;
+  return row ? mapCurriculumEnrollmentRow(row) : null;
+}
+
+export async function pauseCurriculumEnrollment(
+  enrollmentId: number,
+  pausedFrom?: string
+): Promise<CurriculumEnrollment | null> {
+  const client = getClient();
+  const { data, error } = await client.rpc("pause_curriculum_enrollment", {
+    p_enrollment_id: enrollmentId,
+    p_paused_from: pausedFrom ?? new Date().toISOString().slice(0, 10),
+  });
+  if (error) throw error;
+  if (!data) return null;
+  const row = (Array.isArray(data) ? data[0] : data) as CurriculumEnrollmentRow;
+  return row ? mapCurriculumEnrollmentRow(row) : null;
+}
+
+export async function resumeCurriculumEnrollment(
+  enrollmentId: number,
+  resumeOn?: string
+): Promise<CurriculumEnrollment | null> {
+  const client = getClient();
+  const { data, error } = await client.rpc("resume_curriculum_enrollment", {
+    p_enrollment_id: enrollmentId,
+    p_resume_on: resumeOn ?? new Date().toISOString().slice(0, 10),
+  });
+  if (error) throw error;
+  if (!data) return null;
+  const row = (Array.isArray(data) ? data[0] : data) as CurriculumEnrollmentRow;
+  return row ? mapCurriculumEnrollmentRow(row) : null;
+}
+
+export async function fetchClientCurriculumDashboard(clientId?: string): Promise<ClientCurriculumDashboard | null> {
+  const client = getClient();
+  const { data, error } = await client.rpc("fetch_client_curriculum_dashboard", {
+    p_client_id: clientId ?? null,
+  });
+  if (error) throw error;
+  const row = (Array.isArray(data) ? data[0] : data) as ClientCurriculumDashboardRow | undefined;
+  return row ? mapClientCurriculumDashboardRow(row) : null;
+}
+
+export async function fetchCoachCurriculumOverview(coachId?: string): Promise<CoachCurriculumOverviewItem[]> {
+  const client = getClient();
+  const { data, error } = await client.rpc("fetch_coach_curriculum_overview", {
+    p_coach_id: coachId ?? null,
+  });
+  if (error) throw error;
+  return ((data ?? []) as CoachCurriculumOverviewRow[]).map(mapCoachCurriculumOverviewRow);
 }
 
 export function subscribeToMyNotifications(

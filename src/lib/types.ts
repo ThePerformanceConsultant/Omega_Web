@@ -445,7 +445,10 @@ export type NotificationKind =
   | "form_submitted"
   | "task_completed"
   | "workout_completed"
-  | "checkin_submitted";
+  | "checkin_submitted"
+  | "curriculum_week_started"
+  | "curriculum_content_unlocked"
+  | "curriculum_at_risk";
 
 export type NotificationPayload = Record<string, unknown>;
 
@@ -1116,6 +1119,9 @@ export interface VaultFolder {
   dripEnabled: boolean;
   dripIntervalDays: number | null;
   createdAt: string;
+  isLocked?: boolean;
+  unlockAt?: string | null;
+  unlockWeek?: number | null;
   // Derived (not stored in DB)
   itemCount?: number;
   subfolderCount?: number;
@@ -1134,8 +1140,108 @@ export interface VaultItem {
   fileSize: number | null;
   sortOrder: number;
   createdAt: string;
+  isLocked?: boolean;
+  unlockAt?: string | null;
+  unlockWeek?: number | null;
   // Client-side only: original storage path before signed URL resolution
   storagePath?: string | null;
+}
+
+export type CurriculumStatus = "draft" | "active" | "paused" | "completed" | "cancelled";
+
+export type CurriculumTouchpointKind =
+  | "unlock_content"
+  | "kickoff_message"
+  | "nudge_message"
+  | "recap_message"
+  | "assign_quiz"
+  | "assign_action_tasks"
+  | "assign_reflection";
+
+export interface CurriculumProgram {
+  id: number;
+  coachId: string;
+  name: string;
+  durationWeeks: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CurriculumWeek {
+  id: number;
+  programId: number;
+  weekNumber: number;
+  themeTitle: string;
+  focusOutcome: string | null;
+  lectureFolderId: number | null;
+  summaryPrompt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CurriculumTouchpoint {
+  id: number;
+  weekId: number;
+  kind: CurriculumTouchpointKind;
+  dayOffset: number;
+  localTime: string;
+  payloadJson: Record<string, unknown>;
+  isRequired: boolean;
+  isEnabled: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CurriculumEnrollment {
+  id: number;
+  clientId: string;
+  coachId: string;
+  programId: number;
+  startDate: string;
+  timezone: string;
+  status: CurriculumStatus;
+  pausedFrom: string | null;
+  resumeOn: string | null;
+  currentWeekCache: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ClientCurriculumDashboard {
+  enrollmentId: number;
+  programId: number;
+  programName: string;
+  weekNumber: number;
+  weekThemeTitle: string;
+  focusOutcome: string | null;
+  lectureFolderId: number | null;
+  weekStartDate: string;
+  completionPct: number;
+  quizScore: number | null;
+  actionCompletionPct: number | null;
+  resourceCompletionPct: number | null;
+  reflectionDone: boolean;
+  competencyScore: number | null;
+  outcomeStatus: string;
+  nextDueAtUtc: string | null;
+  atRisk: boolean;
+}
+
+export interface CoachCurriculumOverviewItem {
+  enrollmentId: number;
+  clientId: string;
+  clientName: string;
+  programId: number;
+  programName: string;
+  enrollmentStatus: CurriculumStatus;
+  currentWeek: number;
+  competencyScore: number | null;
+  outcomeStatus: string;
+  nextDueAtUtc: string | null;
+  lastDeliveryAtUtc: string | null;
+  atRisk: boolean;
 }
 
 export type InsightCadenceUnit = "days" | "weeks";
