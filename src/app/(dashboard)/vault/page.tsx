@@ -277,7 +277,51 @@ type CourseFolderOption = {
 function getErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim()) return error.message.trim();
   if (typeof error === "string" && error.trim()) return error.trim();
+  if (error && typeof error === "object") {
+    const maybe = error as {
+      message?: unknown;
+      details?: unknown;
+      hint?: unknown;
+      code?: unknown;
+    };
+    const message = typeof maybe.message === "string" ? maybe.message.trim() : "";
+    const details = typeof maybe.details === "string" ? maybe.details.trim() : "";
+    const hint = typeof maybe.hint === "string" ? maybe.hint.trim() : "";
+    const code = typeof maybe.code === "string" ? maybe.code.trim() : "";
+    const pieces = [
+      message,
+      details && details !== message ? details : "",
+      hint ? `Hint: ${hint}` : "",
+      code ? `[${code}]` : "",
+    ].filter(Boolean);
+    if (pieces.length > 0) return pieces.join(" ");
+  }
   return fallback;
+}
+
+function isMissingCurriculumSchemaError(error: unknown): boolean {
+  const raw = String(
+    (error && typeof error === "object")
+      ? JSON.stringify(error)
+      : error ?? ""
+  ).toLowerCase();
+  return [
+    "upsert_course_curriculum_program",
+    "fetch_course_curriculum",
+    "curriculum_assert_root_course_folder",
+    "curriculum_folder_within_course",
+    "could not find the function",
+    "does not exist",
+    "\"code\":\"pgrst202\"",
+    "\"code\":\"42883\"",
+  ].some((needle) => raw.includes(needle));
+}
+
+function getCourseAutomationErrorMessage(error: unknown, fallback: string): string {
+  if (isMissingCurriculumSchemaError(error)) {
+    return "Course automation DB functions are missing in this environment. Apply Supabase migration 00044, then reload this page.";
+  }
+  return getErrorMessage(error, fallback);
 }
 
 function inferProgramMode(summary: CourseAutomationSummary): CourseAutomationProgramMode {
@@ -840,7 +884,7 @@ function CourseAutomationDrawer({
     reload()
       .catch((error) => {
         if (cancelled) return;
-        setNotice({ type: "error", text: getErrorMessage(error, "Could not load course automation.") });
+        setNotice({ type: "error", text: getCourseAutomationErrorMessage(error, "Could not load course automation.") });
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -879,7 +923,7 @@ function CourseAutomationDrawer({
         text: saved ? "Program settings saved." : "Program save returned no data.",
       });
     } catch (error) {
-      setNotice({ type: "error", text: getErrorMessage(error, "Could not save program settings.") });
+      setNotice({ type: "error", text: getCourseAutomationErrorMessage(error, "Could not save program settings.") });
     } finally {
       setIsSavingProgram(false);
     }
@@ -909,7 +953,7 @@ function CourseAutomationDrawer({
       await reload();
       setNotice({ type: "success", text: "Week map saved." });
     } catch (error) {
-      setNotice({ type: "error", text: getErrorMessage(error, "Could not save week map.") });
+      setNotice({ type: "error", text: getCourseAutomationErrorMessage(error, "Could not save week map.") });
     } finally {
       setIsSavingWeeks(false);
     }
@@ -927,7 +971,7 @@ function CourseAutomationDrawer({
       await reload();
       setNotice({ type: "success", text: `Default touchpoints applied for week ${selectedWeek.weekNumber}.` });
     } catch (error) {
-      setNotice({ type: "error", text: getErrorMessage(error, "Could not reset week touchpoints.") });
+      setNotice({ type: "error", text: getCourseAutomationErrorMessage(error, "Could not reset week touchpoints.") });
     } finally {
       setIsResettingTouchpoints(false);
     }
@@ -963,7 +1007,7 @@ function CourseAutomationDrawer({
       await onChanged();
       setNotice({ type: "success", text: "Client enrolled in course automation." });
     } catch (error) {
-      setNotice({ type: "error", text: getErrorMessage(error, "Could not enroll client.") });
+      setNotice({ type: "error", text: getCourseAutomationErrorMessage(error, "Could not enroll client.") });
     } finally {
       setIsEnrolling(false);
     }
@@ -984,7 +1028,7 @@ function CourseAutomationDrawer({
         text: `${entry.clientName} ${entry.enrollmentStatus === "active" ? "paused" : "resumed"}.`,
       });
     } catch (error) {
-      setNotice({ type: "error", text: getErrorMessage(error, "Could not update enrollment.") });
+      setNotice({ type: "error", text: getCourseAutomationErrorMessage(error, "Could not update enrollment.") });
     } finally {
       setIsUpdatingEnrollmentId(null);
     }
