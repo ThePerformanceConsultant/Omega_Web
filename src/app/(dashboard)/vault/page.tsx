@@ -20,6 +20,9 @@ import {
   Lightbulb,
   Save,
   RefreshCw,
+  CheckCircle2,
+  AlertTriangle,
+  CircleDashed,
 } from "lucide-react";
 import {
   getCoachId,
@@ -263,6 +266,26 @@ function buildDefaultCurriculumTouchpoints(): Array<{
       sortOrder: 70,
     },
   ];
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+  return fallback;
+}
+
+function isCurriculumSchemaError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("could not find the function") ||
+    lower.includes("relation") ||
+    lower.includes("does not exist") ||
+    lower.includes("schema cache")
+  ) && lower.includes("curriculum");
 }
 
 // ─── Create / Edit Folder Modal ───
@@ -1058,6 +1081,10 @@ export default function VaultPage() {
   const [enrollTimezone, setEnrollTimezone] = useState("Europe/London");
   const [enrollStartDate, setEnrollStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [isEnrolling, setIsEnrolling] = useState(false);
+  const [isResettingTouchpoints, setIsResettingTouchpoints] = useState(false);
+  const [isUpdatingEnrollmentId, setIsUpdatingEnrollmentId] = useState<number | null>(null);
+  const [curriculumNotice, setCurriculumNotice] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+  const [curriculumSchemaWarning, setCurriculumSchemaWarning] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [clients, setClients] = useState<Client[]>([]);
   const [courseAccessCounts, setCourseAccessCounts] = useState<Record<string, number>>({});
@@ -1114,6 +1141,7 @@ export default function VaultPage() {
           fetchCurriculumPrograms(),
           fetchCoachCurriculumOverview(coachId ?? undefined),
         ]);
+        setCurriculumSchemaWarning(null);
         setCurriculumPrograms(programs);
         setCurriculumOverview(overview);
         setInsights([]);
@@ -1197,6 +1225,16 @@ export default function VaultPage() {
       }
     } catch (err) {
       console.error("[Vault] loadData:", err);
+      if (activeTab === "curriculum") {
+        const message = getErrorMessage(err, "Could not load curriculum data.");
+        if (isCurriculumSchemaError(message)) {
+          setCurriculumSchemaWarning(
+            "Curriculum database functions are not available on this environment yet. Apply the latest Supabase migrations, then reload this page."
+          );
+        } else {
+          setCurriculumSchemaWarning(message);
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -1357,8 +1395,12 @@ export default function VaultPage() {
 
   const selectedProgram = curriculumPrograms.find((program) => program.id === selectedProgramId) ?? null;
   const selectedWeek = curriculumWeeks.find((week) => week.weekNumber === selectedWeekNumber) ?? null;
+  const hasProgramSelected = selectedProgramId !== null;
+  const hasWeekLoaded = selectedWeek !== null;
+  const hasClients = clients.length > 0;
 
   async function handleSaveCurriculumProgram() {
+    setCurriculumNotice(null);
     setIsSavingProgram(true);
     try {
       const saved = await upsertCurriculumProgram({
@@ -1372,15 +1414,28 @@ export default function VaultPage() {
         setSelectedProgramId(saved.id);
         setProgramDraftName(saved.name);
         setProgramDraftDuration(saved.durationWeeks);
+        setCurriculumNotice({
+          type: "success",
+          text: selectedProgram ? "Program updated." : "Program created. Continue with Week Builder below.",
+        });
+      } else {
+        setCurriculumNotice({ type: "error", text: "Program save returned no data." });
       }
       await loadData();
+    } catch (error) {
+      const message = getErrorMessage(error, "Could not save curriculum program.");
+      setCurriculumNotice({ type: "error", text: message });
     } finally {
       setIsSavingProgram(false);
     }
   }
 
   async function handleSaveCurriculumWeek() {
-    if (!selectedProgramId) return;
+    setCurriculumNotice(null);
+    if (!selectedProgramId) {
+      setCurriculumNotice({ type: "info", text: "Create or select a program first." });
+      return;
+    }
     setIsSavingWeek(true);
     try {
       const savedWeek = await upsertCurriculumWeek({
@@ -1396,22 +1451,49 @@ export default function VaultPage() {
       if (savedWeek) {
         const touchpoints = await fetchCurriculumTouchpoints(savedWeek.id);
         setCurriculumTouchpoints(touchpoints);
+        setCurriculumNotice({ type: "success", text: `Week ${savedWeek.weekNumber} saved.` });
+      } else {
+        setCurriculumNotice({ type: "error", text: "Week save returned no data." });
       }
       await loadData();
+    } catch (error) {
+      const message = getErrorMessage(error, "Could not save curriculum week.");
+      setCurriculumNotice({ type: "error", text: message });
     } finally {
       setIsSavingWeek(false);
     }
   }
 
   async function handleResetCurriculumTouchpoints() {
-    if (!selectedWeek) return;
-    await upsertCurriculumTouchpoints(selectedWeek.id, buildDefaultCurriculumTouchpoints());
-    const touchpoints = await fetchCurriculumTouchpoints(selectedWeek.id);
-    setCurriculumTouchpoints(touchpoints);
+    setCurriculumNotice(null);
+    if (!selectedWeek) {
+      setCurriculumNotice({ type: "info", text: "Save the week first, then reset touchpoints." });
+      return;
+    }
+    setIsResettingTouchpoints(true);
+    try {
+      await upsertCurriculumTouchpoints(selectedWeek.id, buildDefaultCurriculumTouchpoints());
+      const touchpoints = await fetchCurriculumTouchpoints(selectedWeek.id);
+      setCurriculumTouchpoints(touchpoints);
+      setCurriculumNotice({ type: "success", text: "Default touchpoints applied." });
+    } catch (error) {
+      const message = getErrorMessage(error, "Could not reset touchpoints.");
+      setCurriculumNotice({ type: "error", text: message });
+    } finally {
+      setIsResettingTouchpoints(false);
+    }
   }
 
   async function handleEnrollClient() {
-    if (!enrollClientId || !selectedProgramId) return;
+    setCurriculumNotice(null);
+    if (!selectedProgramId) {
+      setCurriculumNotice({ type: "info", text: "Select a program before enrolling a client." });
+      return;
+    }
+    if (!enrollClientId) {
+      setCurriculumNotice({ type: "info", text: "Select a client to enroll." });
+      return;
+    }
     setIsEnrolling(true);
     try {
       await enrollClientInCurriculum({
@@ -1421,18 +1503,33 @@ export default function VaultPage() {
         timezone: enrollTimezone || null,
       });
       await loadData();
+      setCurriculumNotice({ type: "success", text: "Client enrolled in curriculum." });
+    } catch (error) {
+      const message = getErrorMessage(error, "Could not enroll client.");
+      setCurriculumNotice({ type: "error", text: message });
     } finally {
       setIsEnrolling(false);
     }
   }
 
   async function handlePauseResume(item: CoachCurriculumOverviewItem) {
-    if (item.enrollmentStatus === "active") {
-      await pauseCurriculumEnrollment(item.enrollmentId);
-    } else if (item.enrollmentStatus === "paused") {
-      await resumeCurriculumEnrollment(item.enrollmentId);
+    setCurriculumNotice(null);
+    setIsUpdatingEnrollmentId(item.enrollmentId);
+    try {
+      if (item.enrollmentStatus === "active") {
+        await pauseCurriculumEnrollment(item.enrollmentId);
+        setCurriculumNotice({ type: "success", text: `${item.clientName} has been paused.` });
+      } else if (item.enrollmentStatus === "paused") {
+        await resumeCurriculumEnrollment(item.enrollmentId);
+        setCurriculumNotice({ type: "success", text: `${item.clientName} has been resumed.` });
+      }
+      await loadData();
+    } catch (error) {
+      const message = getErrorMessage(error, "Could not update enrollment status.");
+      setCurriculumNotice({ type: "error", text: message });
+    } finally {
+      setIsUpdatingEnrollmentId(null);
     }
-    await loadData();
   }
 
   // ─── Render ───
@@ -1461,11 +1558,13 @@ export default function VaultPage() {
                   setFolders([]);
                   setItems([]);
                   setInsights([]);
+                  setCurriculumNotice(null);
                   if (tab.value !== "curriculum") {
                     setCurriculumPrograms([]);
                     setCurriculumWeeks([]);
                     setCurriculumTouchpoints([]);
                     setCurriculumOverview([]);
+                    setCurriculumSchemaWarning(null);
                   }
                 }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -1621,6 +1720,46 @@ export default function VaultPage() {
         </div>
       ) : isCurriculumTab ? (
         <div className="space-y-4">
+          <div className="glass-card p-5 space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Curriculum Setup Flow</h3>
+              <p className="text-xs text-muted">Follow these steps in order: program, week, then enrollment.</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="rounded-lg border border-black/10 bg-black/[0.02] px-3 py-2 flex items-center gap-2">
+                {hasProgramSelected ? <CheckCircle2 size={14} className="text-emerald-600" /> : <CircleDashed size={14} className="text-muted" />}
+                <p className="text-xs text-foreground">1. Save or select a program</p>
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/[0.02] px-3 py-2 flex items-center gap-2">
+                {hasWeekLoaded ? <CheckCircle2 size={14} className="text-emerald-600" /> : <CircleDashed size={14} className="text-muted" />}
+                <p className="text-xs text-foreground">2. Save your week details</p>
+              </div>
+              <div className="rounded-lg border border-black/10 bg-black/[0.02] px-3 py-2 flex items-center gap-2">
+                {curriculumOverview.length > 0 ? <CheckCircle2 size={14} className="text-emerald-600" /> : <CircleDashed size={14} className="text-muted" />}
+                <p className="text-xs text-foreground">3. Enroll client(s)</p>
+              </div>
+            </div>
+            {curriculumNotice && (
+              <div
+                className={`rounded-lg border px-3 py-2 text-xs ${
+                  curriculumNotice.type === "error"
+                    ? "border-red-200 bg-red-50 text-red-700"
+                    : curriculumNotice.type === "success"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border-blue-200 bg-blue-50 text-blue-700"
+                }`}
+              >
+                {curriculumNotice.text}
+              </div>
+            )}
+            {curriculumSchemaWarning && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2 text-xs flex items-start gap-2">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                <span>{curriculumSchemaWarning}</span>
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="glass-card p-5 space-y-4">
               <div className="flex items-center justify-between gap-3">
@@ -1630,11 +1769,11 @@ export default function VaultPage() {
                 </div>
                 <button
                   onClick={handleSaveCurriculumProgram}
-                  disabled={isSavingProgram}
+                  disabled={isSavingProgram || !!curriculumSchemaWarning}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-accent/30 text-accent text-xs font-medium hover:bg-accent/5 disabled:opacity-50"
                 >
                   {isSavingProgram ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
-                  Save Program
+                  {selectedProgram ? "Update Program" : "Save Program"}
                 </button>
               </div>
 
@@ -1643,8 +1782,21 @@ export default function VaultPage() {
                 <select
                   value={selectedProgramId ?? ""}
                   onChange={(e) => {
+                    setCurriculumNotice(null);
                     const next = Number(e.target.value);
-                    setSelectedProgramId(Number.isFinite(next) && next > 0 ? next : null);
+                    if (Number.isFinite(next) && next > 0) {
+                      setSelectedProgramId(next);
+                      return;
+                    }
+                    setSelectedProgramId(null);
+                    setSelectedWeekNumber(1);
+                    setProgramDraftName("16-Week Curriculum");
+                    setProgramDraftDuration(16);
+                    setWeekDraftTheme("");
+                    setWeekDraftOutcome("");
+                    setWeekDraftSummary("");
+                    setWeekDraftLectureFolderId(null);
+                    setCurriculumTouchpoints([]);
                   }}
                   className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
                 >
@@ -1678,6 +1830,9 @@ export default function VaultPage() {
                   />
                 </label>
               </div>
+              {!hasProgramSelected && (
+                <p className="text-[11px] text-muted">Tip: click <strong>Save Program</strong> first to unlock Week Builder actions.</p>
+              )}
             </div>
 
             <div className="glass-card p-5 space-y-4">
@@ -1725,12 +1880,18 @@ export default function VaultPage() {
 
               <button
                 onClick={handleEnrollClient}
-                disabled={!selectedProgramId || !enrollClientId || isEnrolling}
+                disabled={!selectedProgramId || !enrollClientId || isEnrolling || !hasClients || !!curriculumSchemaWarning}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-br from-accent to-accent-light text-white text-sm font-medium disabled:opacity-50"
               >
                 {isEnrolling ? <RefreshCw size={14} className="animate-spin" /> : <Users size={14} />}
                 Enroll in Program
               </button>
+              {!hasClients && (
+                <p className="text-[11px] text-muted">No clients available to enroll yet.</p>
+              )}
+              {!selectedProgramId && (
+                <p className="text-[11px] text-muted">Select or save a program first.</p>
+              )}
             </div>
           </div>
 
@@ -1743,14 +1904,14 @@ export default function VaultPage() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleResetCurriculumTouchpoints}
-                  disabled={!selectedWeek}
+                  disabled={!selectedWeek || isResettingTouchpoints || !!curriculumSchemaWarning}
                   className="px-3 py-2 rounded-lg border border-black/10 text-xs font-medium text-muted hover:text-foreground hover:bg-black/5 disabled:opacity-50"
                 >
-                  Reset Touchpoints
+                  {isResettingTouchpoints ? "Resetting..." : "Reset Touchpoints"}
                 </button>
                 <button
                   onClick={handleSaveCurriculumWeek}
-                  disabled={!selectedProgramId || isSavingWeek}
+                  disabled={!selectedProgramId || isSavingWeek || !!curriculumSchemaWarning}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-accent/30 text-accent text-xs font-medium hover:bg-accent/5 disabled:opacity-50"
                 >
                   {isSavingWeek ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
@@ -1758,6 +1919,11 @@ export default function VaultPage() {
                 </button>
               </div>
             </div>
+            {!selectedProgramId && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 text-blue-700 px-3 py-2 text-xs">
+                Program selection required: save or select a program before editing weeks.
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               <label className="block text-xs text-muted sm:col-span-1">
@@ -1826,7 +1992,16 @@ export default function VaultPage() {
             <div className="space-y-2">
               <h4 className="text-xs font-semibold text-muted uppercase tracking-wide">Touchpoints</h4>
               {curriculumTouchpoints.length === 0 ? (
-                <p className="text-xs text-muted">No touchpoints loaded for this week.</p>
+                <div className="flex items-center gap-3">
+                  <p className="text-xs text-muted">No touchpoints loaded for this week.</p>
+                  <button
+                    onClick={handleResetCurriculumTouchpoints}
+                    disabled={!selectedWeek || isResettingTouchpoints || !!curriculumSchemaWarning}
+                    className="px-2.5 py-1 text-[11px] rounded-md border border-black/10 text-muted hover:text-foreground hover:bg-black/5 disabled:opacity-50"
+                  >
+                    Apply Defaults
+                  </button>
+                </div>
               ) : (
                 <div className="space-y-2">
                   {curriculumTouchpoints.map((touchpoint) => (
@@ -1890,9 +2065,14 @@ export default function VaultPage() {
                       {(entry.enrollmentStatus === "active" || entry.enrollmentStatus === "paused") && (
                         <button
                           onClick={() => handlePauseResume(entry)}
+                          disabled={isUpdatingEnrollmentId === entry.enrollmentId || !!curriculumSchemaWarning}
                           className="px-3 py-1.5 rounded-lg border border-black/10 text-xs font-medium text-muted hover:text-foreground hover:bg-black/5"
                         >
-                          {entry.enrollmentStatus === "active" ? "Pause" : "Resume"}
+                          {isUpdatingEnrollmentId === entry.enrollmentId
+                            ? "Updating..."
+                            : entry.enrollmentStatus === "active"
+                              ? "Pause"
+                              : "Resume"}
                         </button>
                       )}
                     </div>
