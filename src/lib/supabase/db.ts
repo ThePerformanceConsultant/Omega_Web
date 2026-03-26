@@ -368,6 +368,9 @@ import type {
   CurriculumEnrollment,
   ClientCurriculumDashboard,
   CoachCurriculumOverviewItem,
+  CourseAutomationSummary,
+  CourseWeekPlanRow,
+  CourseAutomationEnrollmentRow,
 } from "../types";
 
 /** Optional function that resolves a recipe by ID (from the in-memory recipe store). */
@@ -4230,9 +4233,12 @@ export async function sendPasswordReset(email: string, redirectTo?: string): Pro
 type CurriculumProgramRow = {
   id: number;
   coach_id: string;
+  course_folder_id: number | null;
   name: string;
   duration_weeks: number;
   is_active: boolean;
+  program_mode: "off" | "evergreen" | "cohort_date" | null;
+  cohort_start_date: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -4313,13 +4319,26 @@ type CoachCurriculumOverviewRow = {
   at_risk: boolean;
 };
 
+type CourseWeekPlanRowJson = CurriculumWeekRow & {
+  touchpoints?: CurriculumTouchpointRow[] | null;
+};
+
+type FetchCourseCurriculumPayload = {
+  program: CurriculumProgramRow | null;
+  weeks: CourseWeekPlanRowJson[] | null;
+  overview: CoachCurriculumOverviewRow[] | null;
+};
+
 function mapCurriculumProgramRow(row: CurriculumProgramRow): CurriculumProgram {
   return {
     id: Number(row.id),
     coachId: row.coach_id,
+    courseFolderId: row.course_folder_id != null ? Number(row.course_folder_id) : 0,
     name: row.name,
     durationWeeks: Number(row.duration_weeks),
     isActive: !!row.is_active,
+    programMode: row.program_mode ?? "evergreen",
+    cohortStartDate: row.cohort_start_date ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -4411,6 +4430,19 @@ function mapCoachCurriculumOverviewRow(row: CoachCurriculumOverviewRow): CoachCu
   };
 }
 
+function mapCourseWeekPlanRow(row: CourseWeekPlanRowJson): CourseWeekPlanRow {
+  return {
+    id: Number(row.id),
+    programId: Number(row.program_id),
+    weekNumber: Number(row.week_number),
+    themeTitle: row.theme_title,
+    focusOutcome: row.focus_outcome ?? null,
+    lectureFolderId: row.lecture_folder_id != null ? Number(row.lecture_folder_id) : null,
+    summaryPrompt: row.summary_prompt ?? null,
+    touchpoints: (row.touchpoints ?? []).map((tp) => mapCurriculumTouchpointRow(tp)),
+  };
+}
+
 export async function upsertCurriculumProgram(input: {
   id?: number | null;
   name: string;
@@ -4425,6 +4457,31 @@ export async function upsertCurriculumProgram(input: {
     p_duration_weeks: input.durationWeeks ?? 16,
     p_is_active: input.isActive ?? true,
     p_seed_defaults: input.seedDefaults ?? true,
+  });
+  if (error) throw error;
+  if (!data) return null;
+  const row = (Array.isArray(data) ? data[0] : data) as CurriculumProgramRow;
+  return row ? mapCurriculumProgramRow(row) : null;
+}
+
+export async function upsertCourseCurriculumProgram(input: {
+  courseFolderId: number;
+  name?: string;
+  durationWeeks?: number;
+  isActive?: boolean;
+  seedDefaults?: boolean;
+  programMode?: "off" | "evergreen" | "cohort_date";
+  cohortStartDate?: string | null;
+}): Promise<CurriculumProgram | null> {
+  const client = getClient();
+  const { data, error } = await client.rpc("upsert_course_curriculum_program", {
+    p_course_folder_id: input.courseFolderId,
+    p_name: input.name ?? null,
+    p_duration_weeks: input.durationWeeks ?? 16,
+    p_is_active: input.isActive ?? true,
+    p_seed_defaults: input.seedDefaults ?? true,
+    p_program_mode: input.programMode ?? "evergreen",
+    p_cohort_start_date: input.cohortStartDate ?? null,
   });
   if (error) throw error;
   if (!data) return null;
@@ -4520,6 +4577,21 @@ export async function fetchCurriculumTouchpoints(weekId: number): Promise<Curric
     .order("id", { ascending: true });
   if (error) throw error;
   return ((data ?? []) as CurriculumTouchpointRow[]).map(mapCurriculumTouchpointRow);
+}
+
+export async function fetchCourseCurriculum(courseFolderId: number): Promise<CourseAutomationSummary> {
+  const client = getClient();
+  const { data, error } = await client.rpc("fetch_course_curriculum", {
+    p_course_folder_id: courseFolderId,
+  });
+  if (error) throw error;
+
+  const payload = (Array.isArray(data) ? data[0] : data) as FetchCourseCurriculumPayload | null;
+  return {
+    program: payload?.program ? mapCurriculumProgramRow(payload.program) : null,
+    weeks: (payload?.weeks ?? []).map((row) => mapCourseWeekPlanRow(row)),
+    enrollments: (payload?.overview ?? []).map((row) => mapCoachCurriculumOverviewRow(row)) as CourseAutomationEnrollmentRow[],
+  };
 }
 
 export async function enrollClientInCurriculum(input: {

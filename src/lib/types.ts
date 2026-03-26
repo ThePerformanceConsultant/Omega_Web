@@ -1148,6 +1148,7 @@ export interface VaultItem {
 }
 
 export type CurriculumStatus = "draft" | "active" | "paused" | "completed" | "cancelled";
+export type CourseAutomationProgramMode = "off" | "evergreen" | "cohort_date";
 
 export type CurriculumTouchpointKind =
   | "unlock_content"
@@ -1161,9 +1162,12 @@ export type CurriculumTouchpointKind =
 export interface CurriculumProgram {
   id: number;
   coachId: string;
+  courseFolderId: number;
   name: string;
   durationWeeks: number;
   isActive: boolean;
+  programMode: CourseAutomationProgramMode;
+  cohortStartDate: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1242,6 +1246,25 @@ export interface CoachCurriculumOverviewItem {
   nextDueAtUtc: string | null;
   lastDeliveryAtUtc: string | null;
   atRisk: boolean;
+}
+
+export interface CourseWeekPlanRow {
+  id: number;
+  programId: number;
+  weekNumber: number;
+  themeTitle: string;
+  focusOutcome: string | null;
+  lectureFolderId: number | null;
+  summaryPrompt: string | null;
+  touchpoints: CurriculumTouchpoint[];
+}
+
+export interface CourseAutomationEnrollmentRow extends CoachCurriculumOverviewItem {}
+
+export interface CourseAutomationSummary {
+  program: CurriculumProgram | null;
+  weeks: CourseWeekPlanRow[];
+  enrollments: CourseAutomationEnrollmentRow[];
 }
 
 export type InsightCadenceUnit = "days" | "weeks";
