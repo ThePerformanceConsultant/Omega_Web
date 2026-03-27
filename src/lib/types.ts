@@ -160,7 +160,19 @@ export interface Program {
   name: string;
   created_at: string;
   updated_at: string;
+  is_template?: boolean;
+  is_on_demand?: boolean;
+  folder_id?: number | null;
   program_phases?: ProgramPhase[];
+}
+
+export interface ProgramFolder {
+  id: number;
+  coach_id: string;
+  name: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ProgramPhase {

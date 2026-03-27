@@ -2770,11 +2770,17 @@ function fromDbProgram(row: any): ProgramWithPhases {
     name: row.name ?? "",
     created_at: row.created_at ?? new Date().toISOString(),
     updated_at: row.updated_at ?? new Date().toISOString(),
+    is_template: row.is_template ?? false,
+    is_on_demand: row.is_on_demand ?? false,
+    folder_id: row.folder_id ?? null,
     phases,
   };
 }
 
-export async function fetchPrograms(coachId?: string, options?: { templatesOnly?: boolean }): Promise<ProgramWithPhases[]> {
+export async function fetchPrograms(
+  coachId?: string,
+  options?: { templatesOnly?: boolean; onDemandOnly?: boolean; folderId?: number | null }
+): Promise<ProgramWithPhases[]> {
   const client = getClient();
   let query = client.from("programs").select(`
     *,
@@ -2792,12 +2798,24 @@ export async function fetchPrograms(coachId?: string, options?: { templatesOnly?
   `);
   if (coachId) query = query.eq("coach_id", coachId);
   if (options?.templatesOnly) query = query.eq("is_template", true);
+  if (options?.onDemandOnly) query = query.eq("is_on_demand", true);
+  if (options?.folderId !== undefined) {
+    if (options.folderId === null) {
+      query = query.is("folder_id", null);
+    } else {
+      query = query.eq("folder_id", options.folderId);
+    }
+  }
   const { data, error } = await query.order("created_at", { ascending: false });
   if (error) throw error;
   return (data ?? []).map(fromDbProgram);
 }
 
-export async function saveProgram(program: ProgramWithPhases, coachId: string, options?: { isTemplate?: boolean }): Promise<ProgramWithPhases> {
+export async function saveProgram(
+  program: ProgramWithPhases,
+  coachId: string,
+  options?: { isTemplate?: boolean; isOnDemand?: boolean; folderId?: number | null }
+): Promise<ProgramWithPhases> {
   const client = getClient();
 
   // Resolve coachId — if a placeholder was passed, get the real UUID from auth session
@@ -2831,6 +2849,8 @@ export async function saveProgram(program: ProgramWithPhases, coachId: string, o
         coach_id: resolvedCoachId,
         name: program.name || "Untitled Program",
         is_template: options?.isTemplate ?? false,
+        is_on_demand: options?.isOnDemand ?? false,
+        folder_id: options?.folderId ?? null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -2839,13 +2859,24 @@ export async function saveProgram(program: ProgramWithPhases, coachId: string, o
     throwIfError("insert program", programError);
     savedProgram = data;
   } else {
+    const updatePayload: Record<string, unknown> = {
+      name: program.name || "Untitled Program",
+      updated_at: new Date().toISOString(),
+    };
+    if (options?.isTemplate !== undefined) {
+      updatePayload.is_template = options.isTemplate;
+    }
+    if (options?.isOnDemand !== undefined) {
+      updatePayload.is_on_demand = options.isOnDemand;
+    }
+    if (options?.folderId !== undefined) {
+      updatePayload.folder_id = options.folderId;
+    }
+
     // UPDATE existing program by real DB id
     const { data, error: programError } = await client
       .from("programs")
-      .update({
-        name: program.name || "Untitled Program",
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq("id", program.id)
       .select()
       .single();
@@ -2978,6 +3009,88 @@ export async function saveProgram(program: ProgramWithPhases, coachId: string, o
 export async function deleteProgram(id: number) {
   const client = getClient();
   const { error } = await client.from("programs").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function fetchProgramFolders(coachIdParam?: string) {
+  if (!isSupabaseConfigured()) return [];
+  const coachId = coachIdParam ?? await getCoachId();
+  if (!coachId) return [];
+
+  const client = getClient();
+  const { data, error } = await client
+    .from("program_folders")
+    .select("*")
+    .eq("coach_id", coachId)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function createProgramFolder(name: string, coachIdParam?: string) {
+  if (!isSupabaseConfigured()) return null;
+  const coachId = coachIdParam ?? await getCoachId();
+  if (!coachId) return null;
+
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Folder name is required.");
+
+  const client = getClient();
+  const existing = await fetchProgramFolders(coachId);
+  const nextSortOrder = existing.length;
+
+  const { data, error } = await client
+    .from("program_folders")
+    .insert({
+      coach_id: coachId,
+      name: trimmed,
+      sort_order: nextSortOrder,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateProgramFolder(folderId: number, updates: {
+  name?: string;
+  sortOrder?: number;
+}) {
+  if (!isSupabaseConfigured()) return null;
+  const client = getClient();
+
+  const mapped: Record<string, unknown> = {};
+  if (updates.name !== undefined) mapped.name = updates.name.trim();
+  if (updates.sortOrder !== undefined) mapped.sort_order = updates.sortOrder;
+
+  const { data, error } = await client
+    .from("program_folders")
+    .update(mapped)
+    .eq("id", folderId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteProgramFolder(folderId: number) {
+  if (!isSupabaseConfigured()) return;
+  const client = getClient();
+  const { error } = await client
+    .from("program_folders")
+    .delete()
+    .eq("id", folderId);
+  if (error) throw error;
+}
+
+export async function moveProgramToFolder(programId: number, folderId: number | null) {
+  if (!isSupabaseConfigured()) return;
+  const client = getClient();
+  const { error } = await client
+    .from("programs")
+    .update({ folder_id: folderId })
+    .eq("id", programId);
   if (error) throw error;
 }
 
