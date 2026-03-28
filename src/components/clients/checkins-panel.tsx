@@ -68,7 +68,7 @@ function isLegacySectionHeaderQuestion(question: FormQuestion): boolean {
 }
 
 function renderAnswer(answer: FormAnswer | undefined, question: FormQuestion) {
-  const signatureStyle = { filter: "brightness(0)" };
+  const signatureStyle = { filter: "invert(1)" };
 
   if (question.questionType === "section_header" || isLegacySectionHeaderQuestion(question)) {
     return (
@@ -354,7 +354,8 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="relative h-full">
+      <div className="h-full overflow-y-auto pr-1 pb-32 space-y-5">
       <section className="space-y-2">
         <p className="text-xs text-muted">Review submitted check-ins alongside missed forms and keep review notes in one place.</p>
         <div className="flex items-center justify-between gap-3">
@@ -558,27 +559,29 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
             </div>
           ))}
         </div>
-        <div className="sticky bottom-0 z-10 pt-1">
-          <div className="rounded-2xl border border-black/10 bg-white/95 backdrop-blur-sm px-3 py-3 shadow-[0_14px_34px_rgba(0,0,0,0.08)]">
-            <div className="flex items-center gap-2">
-              <textarea
-                value={noteDraft}
-                onChange={(e) => setNoteDraft(e.target.value)}
-                rows={2}
-                placeholder="Add a note while reviewing..."
-                className="flex-1 px-3 py-2 rounded-lg bg-black/5 border border-black/10 text-sm resize-none"
-              />
-              <button
-                onClick={handleAddNote}
-                disabled={!noteDraft.trim()}
-                className="w-9 h-9 rounded-lg bg-accent text-white flex items-center justify-center hover:bg-accent-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-              >
-                <Plus size={16} />
-              </button>
-            </div>
+      </section>
+      </div>
+
+      <div className="absolute left-0 right-0 bottom-0 z-20 pb-1">
+        <div className="rounded-2xl border border-black/10 bg-white/95 backdrop-blur-sm px-3 py-3 shadow-[0_14px_34px_rgba(0,0,0,0.08)]">
+          <div className="flex items-center gap-2">
+            <textarea
+              value={noteDraft}
+              onChange={(e) => setNoteDraft(e.target.value)}
+              rows={2}
+              placeholder="Add a note while reviewing..."
+              className="flex-1 px-3 py-2 rounded-lg bg-black/5 border border-black/10 text-sm resize-none"
+            />
+            <button
+              onClick={handleAddNote}
+              disabled={!noteDraft.trim()}
+              className="w-9 h-9 rounded-lg bg-accent text-white flex items-center justify-center hover:bg-accent-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            >
+              <Plus size={16} />
+            </button>
           </div>
         </div>
-      </section>
+      </div>
 
       {showAssignFormModal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">

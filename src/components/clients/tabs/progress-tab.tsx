@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, useId } from "react";
+import { useState, useEffect, useMemo, useCallback, useId, useRef } from "react";
 import {
   Star,
   BarChart3,
@@ -47,6 +47,8 @@ function LineChart({
   tooltipRows?: (index: number) => Array<{ label: string; value: string }>;
   fullBleed?: boolean;
 }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [chartWidth, setChartWidth] = useState(500);
   const gradientId = useId().replace(/:/g, "");
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const formatTooltipDate = useCallback((rawValue: string) => {
@@ -95,7 +97,7 @@ function LineChart({
   const padding = fullBleed
     ? { top: 20, right: 18, bottom: 30, left: 58 }
     : { top: 20, right: 20, bottom: 30, left: 50 };
-  const width = 500;
+  const width = chartWidth;
   const chartW = width - padding.left - padding.right;
   const chartH = height - padding.top - padding.bottom;
   const baselineY = padding.top + chartH;
@@ -166,12 +168,38 @@ function LineChart({
   const tooltipWidth = 210;
   const formattedHoveredDate = hoveredPoint ? formatTooltipDate(hoveredPoint.date) : "";
 
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+
+    const updateWidth = () => {
+      const measured = Math.floor(node.clientWidth);
+      setChartWidth(Math.max(420, measured));
+    };
+
+    updateWidth();
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const measured = Math.floor(entry.contentRect.width);
+          setChartWidth(Math.max(420, measured));
+        }
+      });
+      observer.observe(node);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener("resize", updateWidth);
+    return () => window.removeEventListener("resize", updateWidth);
+  }, []);
+
   return (
-    <div className={fullBleed ? "-mx-2 sm:-mx-3" : ""}>
+    <div ref={containerRef} className={fullBleed ? "-mx-2 sm:-mx-3" : ""}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
         className="w-full"
-        style={{ maxHeight: height }}
+        style={{ height }}
       >
       <defs>
         <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
