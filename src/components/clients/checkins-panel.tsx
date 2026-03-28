@@ -68,6 +68,8 @@ function isLegacySectionHeaderQuestion(question: FormQuestion): boolean {
 }
 
 function renderAnswer(answer: FormAnswer | undefined, question: FormQuestion) {
+  const signatureStyle = { filter: "brightness(0)" };
+
   if (question.questionType === "section_header" || isLegacySectionHeaderQuestion(question)) {
     return (
       <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2">
@@ -92,6 +94,7 @@ function renderAnswer(answer: FormAnswer | undefined, question: FormQuestion) {
         src={answer.answerText}
         alt="Client signature"
         className="max-h-40 rounded-lg border border-black/10 bg-white p-2"
+        style={signatureStyle}
       />
     );
   }
@@ -180,6 +183,7 @@ function renderAnswer(answer: FormAnswer | undefined, question: FormQuestion) {
             src={answer.answerText}
             alt="Client signature"
             className="max-h-40 rounded-lg border border-black/10 bg-white p-2"
+            style={signatureStyle}
           />
         );
       }

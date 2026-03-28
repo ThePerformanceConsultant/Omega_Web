@@ -170,9 +170,8 @@ function LineChart({
     <div className={fullBleed ? "-mx-2 sm:-mx-3" : ""}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        preserveAspectRatio={fullBleed ? "none" : undefined}
         className="w-full"
-        style={fullBleed ? { height } : { maxHeight: height }}
+        style={{ maxHeight: height }}
       >
       <defs>
         <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">

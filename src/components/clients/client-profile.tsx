@@ -75,17 +75,19 @@ export function ClientProfile({
         </div>
 
         {activePanel && (
-          <div className="absolute right-0 top-0 bottom-0 w-[min(38vw,560px)] animate-panel-in-right rounded-l-[22px] overflow-hidden border border-black/10 bg-white/98 shadow-[-10px_0_28px_rgba(0,0,0,0.06)]">
-            <SidePanel
-              title={PANEL_TITLES[activePanel]}
-              onClose={() => clientViewStore.setActivePanel(null)}
-            >
-              {activePanel === "chat" && <ChatPanel clientId={client.id} />}
-              {activePanel === "tasks" && <TasksPanel clientId={client.id} />}
-              {activePanel === "checkins" && <CheckinsPanel clientId={client.id} />}
-              {activePanel === "notes" && <NotesPanel clientId={client.id} />}
-              {activePanel === "info" && <InfoPanel clientId={client.id} />}
-            </SidePanel>
+          <div className="fixed right-8 top-[8.75rem] bottom-8 z-30 w-[min(38vw,560px)] animate-panel-in-right pointer-events-none">
+            <div className="h-full rounded-l-[22px] overflow-hidden border border-black/10 bg-white/98 shadow-[-10px_0_28px_rgba(0,0,0,0.06)] pointer-events-auto">
+              <SidePanel
+                title={PANEL_TITLES[activePanel]}
+                onClose={() => clientViewStore.setActivePanel(null)}
+              >
+                {activePanel === "chat" && <ChatPanel clientId={client.id} />}
+                {activePanel === "tasks" && <TasksPanel clientId={client.id} />}
+                {activePanel === "checkins" && <CheckinsPanel clientId={client.id} />}
+                {activePanel === "notes" && <NotesPanel clientId={client.id} />}
+                {activePanel === "info" && <InfoPanel clientId={client.id} />}
+              </SidePanel>
+            </div>
           </div>
         )}
       </div>
