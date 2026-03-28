@@ -1,9 +1,29 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useId } from "react";
-import { Star, BarChart3, Target, CheckCircle2, XCircle, ListChecks, ChevronDown, ChevronRight, ChevronLeft, Settings2, Activity, Plus, Trash2, Heart, Clock, Flame, Zap } from "lucide-react";
+import {
+  Star,
+  BarChart3,
+  Target,
+  CheckCircle2,
+  XCircle,
+  ListChecks,
+  ChevronDown,
+  ChevronRight,
+  ChevronLeft,
+  Settings2,
+  Activity,
+  Plus,
+  Trash2,
+  Heart,
+  Clock,
+  Flame,
+  Zap,
+  Search,
+  Trophy,
+} from "lucide-react";
 import { fetchWorkoutLogs, fetchClientTasks, fetchMetricConfigs, fetchMetricEntries, createMetricConfig, updateMetricConfig, deleteMetricConfig, fetchActivitySessions, deleteActivitySession } from "@/lib/supabase/db";
-import type { WorkoutLogEntry, Task, MetricConfig, MetricEntry, ActivitySession } from "@/lib/types";
+import type { WorkoutLogEntry, Task, MetricConfig, MetricEntry, ActivitySession, SetLogEntry } from "@/lib/types";
 import { AVAILABLE_HEALTH_METRICS, HEALTH_METRIC_CATEGORIES } from "@/lib/types";
 import { WorkoutLogDetail } from "./workout-log-viewer";
 
@@ -14,23 +34,27 @@ function LineChart({
   height = 200,
   targetValue = null,
   valueFormatter,
+  movingAverage,
+  tooltipRows,
 }: {
   data: { date: string; value: number }[];
   color: string;
   height?: number;
   targetValue?: number | null;
   valueFormatter?: (value: number) => string;
+  movingAverage?: { enabled: boolean; window?: number; color?: string };
+  tooltipRows?: (index: number) => Array<{ label: string; value: string }>;
 }) {
   const gradientId = useId().replace(/:/g, "");
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
-  if (data.length < 2) {
+  if (data.length === 0) {
     return (
       <div
         className="flex items-center justify-center text-xs text-muted"
         style={{ height }}
       >
-        Not enough data
+        No data
       </div>
     );
   }
@@ -53,13 +77,19 @@ function LineChart({
   const toY = (value: number) => padding.top + chartH - ((value - minV) / range) * chartH;
 
   const points = data.map((d, i) => {
-    const x = padding.left + (i / (data.length - 1)) * chartW;
+    const x = data.length === 1 ? padding.left + chartW / 2 : padding.left + (i / (data.length - 1)) * chartW;
     const y = toY(d.value);
     return { x, y, date: d.date, value: d.value };
   });
 
-  const pathD = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
-  const areaD = `${pathD} L ${points[points.length - 1].x} ${baselineY} L ${points[0].x} ${baselineY} Z`;
+  const pathD =
+    points.length > 1
+      ? points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ")
+      : `M ${points[0].x} ${points[0].y}`;
+  const areaD =
+    points.length > 1
+      ? `${pathD} L ${points[points.length - 1].x} ${baselineY} L ${points[0].x} ${baselineY} Z`
+      : "";
 
   const formatTick = (value: number) => {
     if (Math.abs(value) >= 1000) return Math.round(value).toLocaleString();
@@ -73,12 +103,31 @@ function LineChart({
     y: toY(v),
   }));
 
-  // X-axis labels (first, middle, last)
-  const xIdxs = [...new Set([0, Math.floor(data.length / 2), data.length - 1])];
+  // X-axis labels (first, middle, last for longer series)
+  const xIdxs = data.length <= 2
+    ? data.map((_, index) => index)
+    : [...new Set([0, Math.floor(data.length / 2), data.length - 1])];
   const hoveredPoint =
     hoveredIndex !== null && points[hoveredIndex] ? points[hoveredIndex] : null;
   const targetY =
     targetValue !== null && Number.isFinite(targetValue) ? toY(targetValue) : null;
+  const movingAveragePoints = useMemo(() => {
+    if (!movingAverage?.enabled) return [];
+    const windowSize = Math.max(2, movingAverage.window ?? 7);
+    return points.map((point, index) => {
+      const start = Math.max(0, index - windowSize + 1);
+      const sample = points.slice(start, index + 1);
+      const avg = sample.reduce((sum, entry) => sum + entry.value, 0) / sample.length;
+      return { x: point.x, y: toY(avg), value: avg, date: point.date };
+    });
+  }, [movingAverage?.enabled, movingAverage?.window, points]);
+  const movingAveragePath = movingAveragePoints.length > 1
+    ? movingAveragePoints.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ")
+    : "";
+  const extraRows =
+    hoveredIndex !== null && tooltipRows ? tooltipRows(hoveredIndex) : [];
+  const tooltipHeight = 36 + extraRows.length * 14;
+  const tooltipWidth = 210;
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ maxHeight: height }}>
@@ -159,10 +208,26 @@ function LineChart({
       })}
 
       {/* Area */}
-      <path d={areaD} fill={`url(#${gradientId})`} />
+      {areaD && <path d={areaD} fill={`url(#${gradientId})`} />}
 
       {/* Line */}
-      <path d={pathD} fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+      {points.length > 1 && (
+        <path d={pathD} fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+      )}
+
+      {/* Moving average */}
+      {movingAverage?.enabled && movingAveragePath && (
+        <path
+          d={movingAveragePath}
+          fill="none"
+          stroke={movingAverage.color || "#111111"}
+          strokeWidth={1.6}
+          strokeDasharray="5 4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity={0.7}
+        />
+      )}
 
       {/* Dots */}
       {points.map((p, i) => (
@@ -195,29 +260,40 @@ function LineChart({
             strokeDasharray="3 3"
           />
           <rect
-            x={Math.min(width - 160, hoveredPoint.x + 10)}
-            y={Math.max(8, hoveredPoint.y - 42)}
-            width={150}
-            height={34}
+            x={Math.min(width - tooltipWidth - 8, hoveredPoint.x + 10)}
+            y={Math.max(8, hoveredPoint.y - tooltipHeight + 8)}
+            width={tooltipWidth}
+            height={tooltipHeight}
             rx={6}
             fill="rgba(17,17,17,0.92)"
           />
           <text
-            x={Math.min(width - 150, hoveredPoint.x + 18)}
-            y={Math.max(24, hoveredPoint.y - 26)}
+            x={Math.min(width - tooltipWidth, hoveredPoint.x + 18)}
+            y={Math.max(24, hoveredPoint.y - tooltipHeight + 24)}
             fontSize={10}
             className="fill-white"
           >
             {hoveredPoint.date}
           </text>
           <text
-            x={Math.min(width - 150, hoveredPoint.x + 18)}
-            y={Math.max(37, hoveredPoint.y - 12)}
+            x={Math.min(width - tooltipWidth, hoveredPoint.x + 18)}
+            y={Math.max(37, hoveredPoint.y - tooltipHeight + 38)}
             fontSize={11}
             className="fill-white"
           >
             {valueFormatter ? valueFormatter(hoveredPoint.value) : formatTick(hoveredPoint.value)}
           </text>
+          {extraRows.map((row, index) => (
+            <text
+              key={`${row.label}-${index}`}
+              x={Math.min(width - tooltipWidth, hoveredPoint.x + 18)}
+              y={Math.max(50, hoveredPoint.y - tooltipHeight + 52 + index * 14)}
+              fontSize={10}
+              className="fill-white/90"
+            >
+              {row.label}: {row.value}
+            </text>
+          ))}
         </g>
       )}
     </svg>
@@ -293,7 +369,7 @@ function TaskHistorySection({ tasksByWeek }: { tasksByWeek: [string, Task[]][] }
   }
 
   return (
-    <div className="glass-card p-5">
+    <div className="glass-card p-5 reveal-on-scroll">
       <div className="flex items-center gap-2 mb-4">
         <ListChecks size={16} className="text-accent" />
         <h3 className="text-base font-bold">Task History</h3>
@@ -533,7 +609,7 @@ function MetricsManagement({
   const activeConfigsForTargets = configs.filter((c) => c.isActive);
 
   return (
-    <div className="glass-card p-5">
+    <div className="glass-card p-5 reveal-on-scroll">
       <div className="flex items-center gap-2 mb-4">
         <Settings2 size={16} className="text-accent" />
         <h3 className="text-base font-bold">Manage Tracked Metrics</h3>
@@ -683,33 +759,39 @@ function MetricsDataDisplay({
 }) {
   const activeConfigs = configs.filter((c) => c.isActive);
   const [selectedMetricId, setSelectedMetricId] = useState<string | null>(null);
+  const [compareMetricId, setCompareMetricId] = useState<string | null>(null);
   const [periodDays, setPeriodDays] = useState(30);
+  const [showMovingAverage, setShowMovingAverage] = useState(true);
 
   // Auto-select first metric
-  const effectiveId = activeConfigs.find((c) => c.id === selectedMetricId)
+  const primaryMetricId = activeConfigs.find((c) => c.id === selectedMetricId)
     ? selectedMetricId
     : activeConfigs[0]?.id ?? null;
+  const effectiveCompareMetricId =
+    compareMetricId && compareMetricId !== primaryMetricId && activeConfigs.some((c) => c.id === compareMetricId)
+      ? compareMetricId
+      : null;
 
-  const selectedConfig = activeConfigs.find((c) => c.id === effectiveId);
+  const primaryConfig = activeConfigs.find((c) => c.id === primaryMetricId) ?? null;
+  const compareConfig = activeConfigs.find((c) => c.id === effectiveCompareMetricId) ?? null;
 
-  const chartData = useMemo(() => {
-    if (!effectiveId) return [];
+  const buildSeries = useCallback((metricId: string | null) => {
+    if (!metricId) return [];
     const filtered = filterByPeriod(
-      entries.filter((e) => e.metricId === effectiveId),
+      entries.filter((e) => e.metricId === metricId),
       periodDays,
     );
     return filtered
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
       .map((e) => ({ date: e.date.slice(0, 10), value: e.value }));
-  }, [entries, effectiveId, periodDays]);
+  }, [entries, periodDays]);
 
-  const latestValue = chartData.length > 0 ? chartData[chartData.length - 1].value : null;
-  const prevValue = chartData.length >= 2 ? chartData[chartData.length - 2].value : null;
-  const change = latestValue !== null && prevValue !== null ? latestValue - prevValue : null;
+  const primarySeries = useMemo(() => buildSeries(primaryMetricId), [buildSeries, primaryMetricId]);
+  const compareSeries = useMemo(() => buildSeries(effectiveCompareMetricId), [buildSeries, effectiveCompareMetricId]);
 
   if (activeConfigs.length === 0) {
     return (
-      <div className="glass-card p-5">
+      <div className="glass-card p-5 reveal-on-scroll">
         <div className="flex items-center gap-2 mb-4">
           <Activity size={16} className="text-accent" />
           <h3 className="text-base font-bold">Health Metrics</h3>
@@ -723,8 +805,46 @@ function MetricsDataDisplay({
     );
   }
 
+  function renderMetricCard(config: MetricConfig | null, series: { date: string; value: number }[]) {
+    if (!config) return null;
+    const latestValue = series.length > 0 ? series[series.length - 1].value : null;
+    const prevValue = series.length >= 2 ? series[series.length - 2].value : null;
+    const change = latestValue !== null && prevValue !== null ? latestValue - prevValue : null;
+    const decimals = config.unit === "steps" ? 0 : 1;
+
+    return (
+      <div className="rounded-xl border border-black/10 bg-white p-4">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div>
+            <p className="text-xs text-muted">{config.name}</p>
+            <p className="text-2xl font-bold">
+              {latestValue !== null ? latestValue.toFixed(decimals) : "—"}
+              {config.unit && (
+                <span className="text-sm font-normal text-muted ml-1">{config.unit}</span>
+              )}
+            </p>
+          </div>
+          {change !== null && (
+            <span className={`text-xs font-semibold ${change > 0 ? "text-success" : change < 0 ? "text-danger" : "text-muted"}`}>
+              {change > 0 ? "+" : ""}{change.toFixed(decimals)} {config.unit}
+            </span>
+          )}
+        </div>
+
+        <LineChart
+          data={series}
+          color={config.color || "#c4841d"}
+          height={220}
+          targetValue={config.dailyTarget}
+          movingAverage={{ enabled: showMovingAverage, window: 7, color: "#111111" }}
+          valueFormatter={(value) => `${value.toFixed(decimals)}${config.unit ? ` ${config.unit}` : ""}`}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="glass-card p-5">
+    <div className="glass-card p-5 reveal-on-scroll">
       <div className="flex items-center gap-2 mb-4">
         <Activity size={16} className="text-accent" />
         <h3 className="text-base font-bold">Health Metrics</h3>
@@ -737,7 +857,7 @@ function MetricsDataDisplay({
             key={c.id}
             onClick={() => setSelectedMetricId(c.id)}
             className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all border ${
-              c.id === effectiveId
+              c.id === primaryMetricId
                 ? "border-accent/30 bg-accent/10 text-accent"
                 : "border-black/5 bg-black/[0.02] text-muted hover:bg-black/[0.05]"
             }`}
@@ -752,46 +872,208 @@ function MetricsDataDisplay({
         <TimePeriodPicker selected={periodDays} onChange={setPeriodDays} />
       </div>
 
-      {/* Current value + change */}
-      {selectedConfig && (
-        <div className="flex items-center gap-4 mb-4">
-          <div>
-            <p className="text-xs text-muted">{selectedConfig.name}</p>
-            <p className="text-2xl font-bold">
-              {latestValue !== null ? latestValue.toFixed(selectedConfig.unit === "steps" ? 0 : 1) : "—"}
-              {selectedConfig.unit && (
-                <span className="text-sm font-normal text-muted ml-1">{selectedConfig.unit}</span>
-              )}
-            </p>
-          </div>
-          {change !== null && (
-            <div className={`text-xs font-medium ${change > 0 ? "text-success" : change < 0 ? "text-danger" : "text-muted"}`}>
-              {change > 0 ? "+" : ""}{change.toFixed(1)} {selectedConfig.unit}
-            </div>
-          )}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <label className="flex items-center gap-2 text-xs text-muted">
+          <span>Compare</span>
+          <select
+            value={effectiveCompareMetricId ?? ""}
+            onChange={(event) => setCompareMetricId(event.target.value || null)}
+            className="text-xs bg-black/5 border border-black/10 rounded-lg px-2 py-1.5 focus:outline-none focus:border-accent/50"
+          >
+            <option value="">None</option>
+            {activeConfigs
+              .filter((config) => config.id !== primaryMetricId)
+              .map((config) => (
+                <option key={config.id} value={config.id}>
+                  {config.name}
+                </option>
+              ))}
+          </select>
+        </label>
+        <button
+          onClick={() => setShowMovingAverage((prev) => !prev)}
+          className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+            showMovingAverage
+              ? "bg-accent/10 text-accent border-accent/25"
+              : "bg-black/[0.02] text-muted border-black/10 hover:bg-black/[0.04]"
+          }`}
+        >
+          7-day MA {showMovingAverage ? "On" : "Off"}
+        </button>
+      </div>
+
+      <div className={`grid gap-4 ${compareConfig ? "md:grid-cols-2" : "grid-cols-1"}`}>
+        {renderMetricCard(primaryConfig, primarySeries)}
+        {compareConfig && renderMetricCard(compareConfig, compareSeries)}
+      </div>
+
+      {primaryConfig && primarySeries.length === 0 && (
+        <div className="py-5 text-center text-muted text-sm">
+          <p className="text-xs">No data recorded yet for {primaryConfig.name}</p>
         </div>
       )}
-
-      {/* Chart */}
-      {selectedConfig && (
-        <LineChart
-          data={chartData}
-          color={selectedConfig.color || "#c4841d"}
-          height={220}
-          targetValue={selectedConfig.dailyTarget}
-          valueFormatter={(value) =>
-            `${value.toFixed(selectedConfig.unit === "steps" ? 0 : 1)}${selectedConfig.unit ? ` ${selectedConfig.unit}` : ""}`
-          }
-        />
-      )}
-
-      {chartData.length === 0 && selectedConfig && (
-        <div className="py-6 text-center text-muted text-sm">
-          <p className="text-xs">No data recorded yet for {selectedConfig.name}</p>
+      {compareConfig && compareSeries.length === 0 && (
+        <div className="py-2 text-muted text-xs">
+          Comparison metric has no entries for this period.
         </div>
       )}
     </div>
   );
+}
+
+type ExerciseProgressPoint = {
+  logId: string;
+  workoutName: string;
+  date: string;
+  bestWeight: number;
+  bestReps: number;
+  estimatedOneRM: number | null;
+  totalVolumeKg: number;
+  totalReps: number;
+  displayVolume: number;
+  volumeUnit: "kg" | "reps";
+  setLogs: SetLogEntry[];
+  isWeightPb: boolean;
+  isVolumePb: boolean;
+};
+
+type ExerciseProgressSummary = {
+  sessions: ExerciseProgressPoint[];
+  totalSessions: number;
+  latestDate: string;
+  allTimeBestWeight: { value: number; date: string } | null;
+  allTimeBestVolume: { value: number; date: string; unit: "kg" | "reps" } | null;
+};
+
+type ExerciseSortMode = "most_recent" | "most_used" | "name" | "favourites";
+
+function formatShortDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+function formatVolume(point: ExerciseProgressPoint): string {
+  if (point.volumeUnit === "kg") {
+    return `${Math.round(point.displayVolume).toLocaleString()} kg`;
+  }
+  return `${Math.round(point.displayVolume).toLocaleString()} reps`;
+}
+
+function formatBestVolume(summary: ExerciseProgressSummary): string {
+  if (!summary.allTimeBestVolume) return "—";
+  const amount = Math.round(summary.allTimeBestVolume.value).toLocaleString();
+  return `${amount} ${summary.allTimeBestVolume.unit}`;
+}
+
+function buildExerciseProgress(allLogs: WorkoutLogEntry[]): Map<string, ExerciseProgressSummary> {
+  const byExercise = new Map<string, ExerciseProgressPoint[]>();
+
+  for (const log of allLogs) {
+    for (const exerciseLog of log.exerciseLogs) {
+      const completedSetLogs = exerciseLog.setLogs.filter((setLog) => setLog.completed);
+      if (completedSetLogs.length === 0) continue;
+
+      let bestWeight = 0;
+      let bestRepsAtBestWeight = 0;
+      let totalVolumeKg = 0;
+      let totalReps = 0;
+
+      for (const setLog of completedSetLogs) {
+        totalReps += Math.max(0, setLog.reps);
+        if (setLog.weight > 0 && setLog.reps > 0) {
+          totalVolumeKg += setLog.weight * setLog.reps;
+          if (
+            setLog.weight > bestWeight ||
+            (setLog.weight === bestWeight && setLog.reps > bestRepsAtBestWeight)
+          ) {
+            bestWeight = setLog.weight;
+            bestRepsAtBestWeight = setLog.reps;
+          }
+        }
+      }
+
+      const hasWeightData = totalVolumeKg > 0;
+      const estimatedOneRM =
+        bestWeight > 0
+          ? bestRepsAtBestWeight > 1
+            ? bestWeight * (1 + bestRepsAtBestWeight / 30)
+            : bestWeight
+          : null;
+      const displayVolume = hasWeightData ? totalVolumeKg : totalReps;
+
+      const point: ExerciseProgressPoint = {
+        logId: log.id,
+        workoutName: log.workoutName,
+        date: log.date,
+        bestWeight,
+        bestReps: bestRepsAtBestWeight,
+        estimatedOneRM,
+        totalVolumeKg,
+        totalReps,
+        displayVolume,
+        volumeUnit: hasWeightData ? "kg" : "reps",
+        setLogs: completedSetLogs,
+        isWeightPb: false,
+        isVolumePb: false,
+      };
+
+      if (!byExercise.has(exerciseLog.exerciseName)) {
+        byExercise.set(exerciseLog.exerciseName, []);
+      }
+      byExercise.get(exerciseLog.exerciseName)!.push(point);
+    }
+  }
+
+  const output = new Map<string, ExerciseProgressSummary>();
+  for (const [exerciseName, points] of byExercise.entries()) {
+    const sortedPoints = [...points].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+    );
+
+    let maxWeight = 0;
+    let maxVolume = 0;
+    for (const point of sortedPoints) {
+      if (point.bestWeight > maxWeight && point.bestWeight > 0) {
+        point.isWeightPb = true;
+        maxWeight = point.bestWeight;
+      }
+      if (point.displayVolume > maxVolume && point.displayVolume > 0) {
+        point.isVolumePb = true;
+        maxVolume = point.displayVolume;
+      }
+    }
+
+    const bestWeightPoint = sortedPoints.reduce<ExerciseProgressPoint | null>((current, point) => {
+      if (point.bestWeight <= 0) return current;
+      if (!current || point.bestWeight > current.bestWeight) return point;
+      return current;
+    }, null);
+
+    const bestVolumePoint = sortedPoints.reduce<ExerciseProgressPoint | null>((current, point) => {
+      if (point.displayVolume <= 0) return current;
+      if (!current || point.displayVolume > current.displayVolume) return point;
+      return current;
+    }, null);
+
+    output.set(exerciseName, {
+      sessions: sortedPoints,
+      totalSessions: sortedPoints.length,
+      latestDate: sortedPoints[sortedPoints.length - 1]?.date ?? "",
+      allTimeBestWeight: bestWeightPoint
+        ? { value: bestWeightPoint.bestWeight, date: bestWeightPoint.date }
+        : null,
+      allTimeBestVolume: bestVolumePoint
+        ? {
+            value: bestVolumePoint.displayVolume,
+            date: bestVolumePoint.date,
+            unit: bestVolumePoint.volumeUnit,
+          }
+        : null,
+    });
+  }
+
+  return output;
 }
 
 // ─── Activity Type Icons & Colors ───
@@ -885,7 +1167,7 @@ function ActivitySessionsSection({
   }, [filtered]);
 
   return (
-    <div className="glass-card p-5">
+    <div className="glass-card p-5 reveal-on-scroll">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <Heart size={16} className="text-danger" />
@@ -1160,7 +1442,7 @@ function WeeklySrpeSection({ sessions }: { sessions: ActivitySession[] }) {
   if (weeklyData.length === 0) return null;
 
   return (
-    <div className="glass-card p-5">
+    <div className="glass-card p-5 reveal-on-scroll">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <Zap size={16} className="text-warning" />
@@ -1280,62 +1562,79 @@ export function ProgressTab({ clientId }: { clientId: string }) {
     return () => { cancelled = true; };
   }, [clientId, loadMetrics]);
 
-  // Derive exercise performance from real workout logs
-  const exercisePerformance = useMemo(() => {
-    const byExercise = new Map<string, { date: string; weight: number; reps: number; estimatedOneRM: number; totalVolume: number }[]>();
-    for (const log of allLogs) {
-      for (const ex of log.exerciseLogs) {
-        const completedSetLogs = ex.setLogs.filter((s) => s.completed);
-        const hasLoadData = completedSetLogs.some((s) => s.weight > 0 || s.reps > 0);
-        if (!hasLoadData) continue;
-
-        if (!byExercise.has(ex.exerciseName)) {
-          byExercise.set(ex.exerciseName, []);
-        }
-        let bestWeight = 0;
-        let bestReps = 0;
-        const totalVol = completedSetLogs.reduce((sum: number, s: { weight: number; reps: number }) => {
-          if (s.weight > bestWeight) {
-            bestWeight = s.weight;
-            bestReps = s.reps;
-          }
-          return sum + s.weight * s.reps;
-        }, 0);
-
-        if (bestWeight <= 0 && totalVol <= 0) continue;
-
-        // Epley formula for estimated 1RM
-        const e1rm = bestReps > 1 ? bestWeight * (1 + bestReps / 30) : bestWeight;
-        byExercise.get(ex.exerciseName)!.push({
-          date: log.date,
-          weight: bestWeight,
-          reps: bestReps,
-          estimatedOneRM: e1rm,
-          totalVolume: totalVol,
-        });
-      }
-    }
-    return byExercise;
-  }, [allLogs]);
-
-  const exerciseNames = useMemo(() => [...exercisePerformance.keys()], [exercisePerformance]);
+  const exerciseProgress = useMemo(() => buildExerciseProgress(allLogs), [allLogs]);
   const [selectedExercise, setSelectedExercise] = useState("");
   const [perfPeriodDays, setPerfPeriodDays] = useState(90);
+  const [exerciseSearch, setExerciseSearch] = useState("");
+  const [exerciseSortMode, setExerciseSortMode] = useState<ExerciseSortMode>("most_recent");
+  const [expandedExerciseSessions, setExpandedExerciseSessions] = useState<Set<string>>(new Set());
 
-  // Derive effective selection: user pick if valid, otherwise first available
-  const effectiveExercise = exerciseNames.includes(selectedExercise)
+  const exerciseNames = useMemo(() => [...exerciseProgress.keys()], [exerciseProgress]);
+  const visibleExerciseNames = useMemo(() => {
+    const search = exerciseSearch.trim().toLowerCase();
+    let names = [...exerciseNames];
+    if (search) {
+      names = names.filter((name) => name.toLowerCase().includes(search));
+    }
+
+    if (exerciseSortMode === "name") {
+      names.sort((a, b) => a.localeCompare(b));
+    } else if (exerciseSortMode === "most_used") {
+      names.sort((a, b) => {
+        const countA = exerciseProgress.get(a)?.totalSessions ?? 0;
+        const countB = exerciseProgress.get(b)?.totalSessions ?? 0;
+        if (countA !== countB) return countB - countA;
+        return a.localeCompare(b);
+      });
+    } else {
+      names.sort((a, b) => {
+        const dateA = exerciseProgress.get(a)?.latestDate ?? "";
+        const dateB = exerciseProgress.get(b)?.latestDate ?? "";
+        return dateB.localeCompare(dateA);
+      });
+    }
+
+    return names;
+  }, [exerciseNames, exerciseProgress, exerciseSearch, exerciseSortMode]);
+
+  const effectiveExercise = visibleExerciseNames.includes(selectedExercise)
     ? selectedExercise
-    : exerciseNames[0] ?? "";
+    : visibleExerciseNames[0] ?? "";
 
-  const exerciseData = useMemo(
-    () =>
-      filterByPeriod(
-        (exercisePerformance.get(effectiveExercise) ?? [])
-          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
-        perfPeriodDays,
-      ),
-    [exercisePerformance, effectiveExercise, perfPeriodDays]
+  const selectedExerciseSummary = useMemo(
+    () => exerciseProgress.get(effectiveExercise) ?? null,
+    [exerciseProgress, effectiveExercise],
   );
+
+  const filteredExerciseSessions = useMemo(
+    () => (selectedExerciseSummary ? filterByPeriod(selectedExerciseSummary.sessions, perfPeriodDays) : []),
+    [selectedExerciseSummary, perfPeriodDays],
+  );
+
+  const e1rmSessions = useMemo(
+    () => filteredExerciseSessions.filter((session) => session.estimatedOneRM != null),
+    [filteredExerciseSessions],
+  );
+
+  const e1rmChartData = useMemo(
+    () => e1rmSessions.map((session) => ({ date: session.date, value: session.estimatedOneRM ?? 0 })),
+    [e1rmSessions],
+  );
+
+  const volumeChartData = useMemo(
+    () =>
+      filteredExerciseSessions.map((session) => ({
+        date: session.date,
+        value: session.displayVolume,
+      })),
+    [filteredExerciseSessions],
+  );
+
+  useEffect(() => {
+    setExpandedExerciseSessions(new Set());
+  }, [effectiveExercise, perfPeriodDays]);
+
+  const latestExerciseSession = filteredExerciseSessions[filteredExerciseSessions.length - 1] ?? null;
 
   // Group tasks by week (Monday date string) — only client-owned tasks with due dates
   const tasksByWeek = useMemo(() => {
@@ -1391,72 +1690,231 @@ export function ProgressTab({ clientId }: { clientId: string }) {
       </div>
 
       {/* ─── Exercise Performance ─── */}
-      <div className="glass-card p-5">
-        <div className="flex items-center justify-between mb-4">
+      <div className="glass-card p-5 reveal-on-scroll">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-2">
             <BarChart3 size={16} className="text-warning" />
             <h3 className="text-base font-bold">Exercise Performance</h3>
           </div>
-          {exerciseNames.length > 0 && (
-            <select
-              value={effectiveExercise}
-              onChange={(e) => setSelectedExercise(e.target.value)}
-              className="text-sm bg-black/5 border border-black/10 rounded-lg px-3 py-1.5 focus:outline-none focus:border-accent/50"
-            >
-              {exerciseNames.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-
-        {/* Time period filter */}
-        <div className="mb-4">
           <TimePeriodPicker selected={perfPeriodDays} onChange={setPerfPeriodDays} />
         </div>
 
-        {exerciseData.length >= 2 ? (
-          <div className="space-y-4">
-            <div>
-              <p className="text-xs text-muted mb-1 font-medium">Estimated 1RM</p>
-              <LineChart
-                data={exerciseData.map((e) => ({ date: e.date, value: e.estimatedOneRM }))}
-                color="#c4841d"
-                height={200}
-                valueFormatter={(value) => `${value.toFixed(1)} kg`}
-              />
-            </div>
-            <div>
-              <p className="text-xs text-muted mb-1 font-medium">Total Volume (sets × reps × weight)</p>
-              <LineChart
-                data={exerciseData.map((e) => ({ date: e.date, value: e.totalVolume }))}
-                color="#2d8a4e"
-                height={200}
-                valueFormatter={(value) => `${Math.round(value).toLocaleString()} kg`}
-              />
-            </div>
-            <div className="flex items-center gap-6 pt-3 border-t border-black/5 text-xs text-muted">
-              <span>
-                Best Set: <strong className="text-foreground">{exerciseData[exerciseData.length - 1].weight} kg × {exerciseData[exerciseData.length - 1].reps}</strong>
-              </span>
-              <span>
-                Est. 1RM: <strong className="text-foreground">{exerciseData[exerciseData.length - 1].estimatedOneRM.toFixed(1)} kg</strong>
-              </span>
-            </div>
-          </div>
-        ) : (
+        {exerciseNames.length === 0 ? (
           <div className="py-6 text-center text-muted text-sm">
             <BarChart3 size={28} className="mx-auto mb-2 opacity-30" />
-            <p className="font-medium">Not enough data</p>
-            <p className="text-xs mt-1">Performance charts will appear once the client logs workouts</p>
+            <p className="font-medium">No logged exercises yet</p>
+            <p className="text-xs mt-1">Exercise performance appears after sessions are completed</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-[290px_minmax(0,1fr)] gap-5">
+            <aside className="rounded-xl border border-black/10 bg-white p-3 h-fit">
+              <h4 className="text-sm font-semibold mb-2">Exercises</h4>
+              <div className="relative mb-2">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+                <input
+                  type="text"
+                  value={exerciseSearch}
+                  onChange={(event) => setExerciseSearch(event.target.value)}
+                  placeholder="Search exercises..."
+                  className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-black/5 border border-black/10 text-sm focus:outline-none focus:border-accent/50"
+                />
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-muted mb-2">
+                <span>Total ({visibleExerciseNames.length})</span>
+                <select
+                  value={exerciseSortMode}
+                  onChange={(event) => setExerciseSortMode(event.target.value as ExerciseSortMode)}
+                  className="bg-black/5 border border-black/10 rounded-md px-2 py-1 text-[11px] focus:outline-none focus:border-accent/50"
+                >
+                  <option value="most_recent">Most recent</option>
+                  <option value="most_used">Most used</option>
+                  <option value="name">Name</option>
+                  <option value="favourites" disabled>
+                    Favourites (Coming soon)
+                  </option>
+                </select>
+              </div>
+              <div className="space-y-1 max-h-[560px] overflow-y-auto hide-scrollbar pr-1">
+                {visibleExerciseNames.map((exerciseName) => {
+                  const summary = exerciseProgress.get(exerciseName);
+                  const isActive = exerciseName === effectiveExercise;
+                  if (!summary) return null;
+                  return (
+                    <button
+                      key={exerciseName}
+                      onClick={() => setSelectedExercise(exerciseName)}
+                      className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${
+                        isActive
+                          ? "bg-accent/10 border border-accent/25"
+                          : "border border-transparent hover:bg-black/[0.03]"
+                      }`}
+                    >
+                      <p className={`text-sm font-semibold truncate ${isActive ? "text-accent" : "text-foreground"}`}>{exerciseName}</p>
+                      <p className="text-xs text-muted">
+                        {formatShortDate(summary.latestDate)} · {summary.totalSessions} session{summary.totalSessions === 1 ? "" : "s"}
+                      </p>
+                    </button>
+                  );
+                })}
+                {visibleExerciseNames.length === 0 && (
+                  <p className="py-6 text-center text-xs text-muted">No matching exercises.</p>
+                )}
+              </div>
+            </aside>
+
+            <div className="space-y-4 min-w-0">
+              {selectedExerciseSummary ? (
+                <>
+                  <div className="rounded-xl border border-black/10 bg-white p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h4 className="text-lg font-semibold">{effectiveExercise}</h4>
+                        <p className="text-xs text-muted">All-time bests</p>
+                      </div>
+                      <div className="flex gap-5 text-xs">
+                        <div>
+                          <p className="text-muted uppercase tracking-wide text-[10px]">Best Weight</p>
+                          <p className="font-semibold">
+                            {selectedExerciseSummary.allTimeBestWeight
+                              ? `${selectedExerciseSummary.allTimeBestWeight.value} kg`
+                              : "—"}
+                          </p>
+                          <p className="text-muted">
+                            {selectedExerciseSummary.allTimeBestWeight
+                              ? formatShortDate(selectedExerciseSummary.allTimeBestWeight.date)
+                              : ""}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted uppercase tracking-wide text-[10px]">Best Volume</p>
+                          <p className="font-semibold">{formatBestVolume(selectedExerciseSummary)}</p>
+                          <p className="text-muted">
+                            {selectedExerciseSummary.allTimeBestVolume
+                              ? formatShortDate(selectedExerciseSummary.allTimeBestVolume.date)
+                              : ""}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-black/10 bg-white p-4">
+                    <p className="text-xs text-muted mb-1 font-medium">Estimated 1RM</p>
+                    <LineChart
+                      data={e1rmChartData}
+                      color="#c4841d"
+                      height={180}
+                      valueFormatter={(value) => `${value.toFixed(1)} kg`}
+                      tooltipRows={(index) => {
+                        const session = e1rmSessions[index];
+                        if (!session) return [];
+                        return [
+                          { label: "Volume", value: formatVolume(session) },
+                          { label: "Best Set", value: `${session.bestWeight} kg × ${session.bestReps}` },
+                        ];
+                      }}
+                    />
+                  </div>
+
+                  <div className="rounded-xl border border-black/10 bg-white p-4">
+                    <p className="text-xs text-muted mb-1 font-medium">Total Session Volume</p>
+                    <LineChart
+                      data={volumeChartData}
+                      color="#2d8a4e"
+                      height={180}
+                      valueFormatter={(value) =>
+                        latestExerciseSession?.volumeUnit === "kg"
+                          ? `${Math.round(value).toLocaleString()} kg`
+                          : `${Math.round(value).toLocaleString()} reps`
+                      }
+                      tooltipRows={(index) => {
+                        const session = filteredExerciseSessions[index];
+                        if (!session) return [];
+                        return [
+                          { label: "e1RM", value: session.estimatedOneRM ? `${session.estimatedOneRM.toFixed(1)} kg` : "n/a" },
+                          { label: "Best Set", value: `${session.bestWeight} kg × ${session.bestReps}` },
+                        ];
+                      }}
+                    />
+                  </div>
+
+                  <div className="rounded-xl border border-black/10 bg-white p-4">
+                    <h5 className="text-sm font-semibold mb-2">History</h5>
+                    <div className="space-y-2">
+                      {[...filteredExerciseSessions].reverse().map((session) => {
+                        const isOpen = expandedExerciseSessions.has(session.logId);
+                        return (
+                          <div key={`${session.logId}-${session.date}`} className="rounded-lg border border-black/10 overflow-hidden">
+                            <button
+                              onClick={() => {
+                                setExpandedExerciseSessions((previous) => {
+                                  const next = new Set(previous);
+                                  if (next.has(session.logId)) next.delete(session.logId);
+                                  else next.add(session.logId);
+                                  return next;
+                                });
+                              }}
+                              className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-black/[0.02] transition-colors"
+                            >
+                              <div>
+                                <p className="text-sm font-semibold">{formatShortDate(session.date)}</p>
+                                <p className="text-xs text-muted truncate">{session.workoutName}</p>
+                              </div>
+                              <div className="flex items-center gap-3 text-xs">
+                                <span className="text-muted">Vol: {formatVolume(session)}</span>
+                                <span className="text-muted">e1RM: {session.estimatedOneRM ? `${session.estimatedOneRM.toFixed(1)} kg` : "n/a"}</span>
+                                {(session.isWeightPb || session.isVolumePb) && (
+                                  <span className="inline-flex items-center gap-1 text-warning font-semibold">
+                                    <Trophy size={12} />
+                                    PB
+                                  </span>
+                                )}
+                                {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                              </div>
+                            </button>
+
+                            {isOpen && (
+                              <div className="border-t border-black/10 px-3 py-2.5">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="text-left text-muted">
+                                      <th className="py-1.5 font-medium">Set</th>
+                                      <th className="py-1.5 font-medium">Weight</th>
+                                      <th className="py-1.5 font-medium">Reps</th>
+                                      <th className="py-1.5 font-medium">RPE</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {session.setLogs.map((setLog) => (
+                                      <tr key={`${session.logId}-${setLog.setNumber}`} className="border-t border-black/5">
+                                        <td className="py-1.5">{setLog.setNumber}</td>
+                                        <td className="py-1.5">{setLog.weight || "—"}</td>
+                                        <td className="py-1.5">{setLog.reps || "—"}</td>
+                                        <td className="py-1.5">{setLog.rpe ?? "—"}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="py-8 text-center text-muted text-sm rounded-xl border border-black/10 bg-white">
+                  Select an exercise to view chart history.
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
 
       {/* ─── Session History ─── */}
-      <div className="glass-card p-5">
+      <div className="glass-card p-5 reveal-on-scroll">
         <h3 className="text-base font-bold mb-4">Recent Workout Sessions</h3>
         {sessions.length === 0 ? (
           <p className="text-sm text-muted text-center py-6">No sessions recorded yet</p>
