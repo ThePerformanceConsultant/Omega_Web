@@ -586,7 +586,13 @@ export interface ClientRoadmap {
 // Client Sub-Page Navigation
 // ==========================================
 
-export type ClientSubTab = "overview" | "workouts" | "nutrition" | "progress" | "roadmap";
+export type ClientSubTab =
+  | "overview"
+  | "workouts"
+  | "nutrition"
+  | "progress"
+  | "roadmap"
+  | "automations";
 
 // ==========================================
 // Client Program Assignment Types
@@ -1157,6 +1163,68 @@ export interface VaultItem {
   unlockWeek?: number | null;
   // Client-side only: original storage path before signed URL resolution
   storagePath?: string | null;
+}
+
+export type AutomationAssignmentType = "course" | "resource";
+export type AutomationAssignmentStatus = "active" | "paused" | "completed" | "cancelled";
+export type AutomationStepRunStatus = "pending" | "executed" | "failed" | "skipped";
+
+export interface AutomationTemplateStepAssignment {
+  id: number;
+  assignmentType: AutomationAssignmentType;
+  folderId: number;
+  folderName: string;
+  folderSection: VaultSection;
+}
+
+export interface AutomationTemplateStep {
+  id: number;
+  stepOrder: number;
+  dayOffset: number;
+  title: string;
+  message: string | null;
+  assignments: AutomationTemplateStepAssignment[];
+}
+
+export interface AutomationTemplate {
+  id: number;
+  coachId: string;
+  name: string;
+  description: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  activeAssignmentCount: number;
+  steps: AutomationTemplateStep[];
+}
+
+export interface ClientAutomationStepRun {
+  stepId: number;
+  stepOrder: number;
+  dayOffset: number;
+  title: string;
+  message: string | null;
+  runStatus: AutomationStepRunStatus;
+  dueAt: string | null;
+  executedAt: string | null;
+  error: string | null;
+  assignments: AutomationTemplateStepAssignment[];
+}
+
+export interface ClientAutomationAssignment {
+  assignmentId: number;
+  templateId: number;
+  templateName: string;
+  templateDescription: string | null;
+  status: AutomationAssignmentStatus;
+  startDate: string;
+  timezone: string;
+  nextDueAt: string | null;
+  completedAt: string | null;
+  totalSteps: number;
+  executedSteps: number;
+  failedSteps: number;
+  steps: ClientAutomationStepRun[];
 }
 
 export type CurriculumStatus = "draft" | "active" | "paused" | "completed" | "cancelled";

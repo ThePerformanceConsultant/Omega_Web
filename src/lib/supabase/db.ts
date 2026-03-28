@@ -362,6 +362,13 @@ import type {
   SupplementAdherenceLog,
   NutritionDailyNote,
   NutritionDayStatus,
+  AutomationTemplate,
+  AutomationTemplateStep,
+  AutomationTemplateStepAssignment,
+  ClientAutomationAssignment,
+  ClientAutomationStepRun,
+  AutomationAssignmentType,
+  AutomationStepRunStatus,
   CurriculumProgram,
   CurriculumWeek,
   CurriculumTouchpoint,
@@ -3709,6 +3716,271 @@ export async function revokeCourseAccess(folderId: number, clientId: string) {
   if (error) throw error;
 }
 
+export async function fetchResourceAccess(folderId: number): Promise<string[]> {
+  const client = getClient();
+  const { data, error } = await client
+    .from("vault_resource_access")
+    .select("client_id")
+    .eq("folder_id", folderId);
+  if (error) throw error;
+  return (data ?? []).map((r: { client_id: string }) => r.client_id);
+}
+
+export async function grantResourceAccess(folderId: number, clientId: string) {
+  const client = getClient();
+  const { error } = await client
+    .from("vault_resource_access")
+    .upsert({ folder_id: folderId, client_id: clientId }, { onConflict: "folder_id,client_id" });
+  if (error) throw error;
+}
+
+export async function revokeResourceAccess(folderId: number, clientId: string) {
+  const client = getClient();
+  const { error } = await client
+    .from("vault_resource_access")
+    .delete()
+    .eq("folder_id", folderId)
+    .eq("client_id", clientId);
+  if (error) throw error;
+}
+
+type AutomationTemplateStepAssignmentRow = {
+  id: number;
+  assignment_type: AutomationAssignmentType;
+  folder_id: number;
+  folder_name: string;
+  folder_section: "resources" | "courses";
+};
+
+type AutomationTemplateStepRow = {
+  id: number;
+  step_order: number;
+  day_offset: number;
+  title: string;
+  message: string | null;
+  assignments?: AutomationTemplateStepAssignmentRow[] | null;
+};
+
+type AutomationTemplateRow = {
+  id: number;
+  coach_id: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  active_assignment_count: number;
+  steps?: AutomationTemplateStepRow[] | null;
+};
+
+type ClientAutomationStepRunRow = {
+  step_id: number;
+  step_order: number;
+  day_offset: number;
+  title: string;
+  message: string | null;
+  run_status: AutomationStepRunStatus;
+  due_at: string | null;
+  executed_at: string | null;
+  error: string | null;
+  assignments?: AutomationTemplateStepAssignmentRow[] | null;
+};
+
+type ClientAutomationAssignmentRow = {
+  assignment_id: number;
+  template_id: number;
+  template_name: string;
+  template_description: string | null;
+  status: ClientAutomationAssignment["status"];
+  start_date: string;
+  timezone: string;
+  next_due_at: string | null;
+  completed_at: string | null;
+  total_steps: number;
+  executed_steps: number;
+  failed_steps: number;
+  steps?: ClientAutomationStepRunRow[] | null;
+};
+
+function mapAutomationTemplateStepAssignmentRow(row: AutomationTemplateStepAssignmentRow): AutomationTemplateStepAssignment {
+  return {
+    id: Number(row.id),
+    assignmentType: row.assignment_type,
+    folderId: Number(row.folder_id),
+    folderName: row.folder_name,
+    folderSection: row.folder_section,
+  };
+}
+
+function mapAutomationTemplateStepRow(row: AutomationTemplateStepRow): AutomationTemplateStep {
+  return {
+    id: Number(row.id),
+    stepOrder: Number(row.step_order),
+    dayOffset: Number(row.day_offset),
+    title: row.title,
+    message: row.message ?? null,
+    assignments: (row.assignments ?? []).map((entry) =>
+      mapAutomationTemplateStepAssignmentRow(entry)
+    ),
+  };
+}
+
+function mapAutomationTemplateRow(row: AutomationTemplateRow): AutomationTemplate {
+  return {
+    id: Number(row.id),
+    coachId: row.coach_id,
+    name: row.name,
+    description: row.description ?? null,
+    isActive: !!row.is_active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    activeAssignmentCount: Number(row.active_assignment_count ?? 0),
+    steps: (row.steps ?? []).map((entry) => mapAutomationTemplateStepRow(entry)),
+  };
+}
+
+function mapClientAutomationStepRunRow(row: ClientAutomationStepRunRow): ClientAutomationStepRun {
+  return {
+    stepId: Number(row.step_id),
+    stepOrder: Number(row.step_order),
+    dayOffset: Number(row.day_offset),
+    title: row.title,
+    message: row.message ?? null,
+    runStatus: row.run_status,
+    dueAt: row.due_at ?? null,
+    executedAt: row.executed_at ?? null,
+    error: row.error ?? null,
+    assignments: (row.assignments ?? []).map((entry) =>
+      mapAutomationTemplateStepAssignmentRow(entry)
+    ),
+  };
+}
+
+function mapClientAutomationAssignmentRow(row: ClientAutomationAssignmentRow): ClientAutomationAssignment {
+  return {
+    assignmentId: Number(row.assignment_id),
+    templateId: Number(row.template_id),
+    templateName: row.template_name,
+    templateDescription: row.template_description ?? null,
+    status: row.status,
+    startDate: row.start_date,
+    timezone: row.timezone,
+    nextDueAt: row.next_due_at ?? null,
+    completedAt: row.completed_at ?? null,
+    totalSteps: Number(row.total_steps ?? 0),
+    executedSteps: Number(row.executed_steps ?? 0),
+    failedSteps: Number(row.failed_steps ?? 0),
+    steps: (row.steps ?? []).map((entry) => mapClientAutomationStepRunRow(entry)),
+  };
+}
+
+export async function upsertAutomationTemplate(input: {
+  id?: number | null;
+  name: string;
+  description?: string | null;
+  isActive?: boolean;
+  steps: Array<{
+    dayOffset: number;
+    title: string;
+    message?: string | null;
+    assignments: Array<{
+      assignmentType: AutomationAssignmentType;
+      folderId: number;
+    }>;
+  }>;
+}): Promise<AutomationTemplate | null> {
+  const client = getClient();
+  const payload = input.steps.map((step) => ({
+    day_offset: Math.max(0, Number(step.dayOffset || 0)),
+    title: step.title,
+    message: step.message ?? null,
+    assignments: step.assignments.map((assignment) => ({
+      assignment_type: assignment.assignmentType,
+      folder_id: assignment.folderId,
+    })),
+  }));
+
+  const { data, error } = await client.rpc("upsert_automation_template", {
+    p_id: input.id ?? null,
+    p_name: input.name,
+    p_description: input.description ?? null,
+    p_is_active: input.isActive ?? true,
+    p_steps: payload,
+  });
+  if (error) throw error;
+  if (!data) return null;
+
+  const template = (Array.isArray(data) ? data[0] : data) as AutomationTemplateRow;
+  if (!template?.id) return null;
+
+  const templates = await fetchCoachAutomationTemplates();
+  return templates.find((entry) => entry.id === Number(template.id)) ?? null;
+}
+
+export async function fetchCoachAutomationTemplates(): Promise<AutomationTemplate[]> {
+  const client = getClient();
+  const { data, error } = await client.rpc("fetch_coach_automation_templates");
+  if (error) throw error;
+  return ((data ?? []) as AutomationTemplateRow[]).map((row) =>
+    mapAutomationTemplateRow(row)
+  );
+}
+
+export async function assignAutomationTemplateToClient(input: {
+  templateId: number;
+  clientId: string;
+  startDate?: string;
+  timezone?: string | null;
+}): Promise<ClientAutomationAssignment | null> {
+  const client = getClient();
+  const { data, error } = await client.rpc("assign_automation_template", {
+    p_template_id: input.templateId,
+    p_client_id: input.clientId,
+    p_start_date: input.startDate ?? new Date().toISOString().slice(0, 10),
+    p_timezone: input.timezone ?? null,
+  });
+  if (error) throw error;
+  if (!data) return null;
+
+  const row = (Array.isArray(data) ? data[0] : data) as { id?: number } | null;
+  if (!row?.id) return null;
+  const assignments = await fetchClientAutomations(input.clientId);
+  return assignments.find((entry) => entry.assignmentId === Number(row.id)) ?? null;
+}
+
+export async function fetchClientAutomations(clientId: string): Promise<ClientAutomationAssignment[]> {
+  const client = getClient();
+  const { data, error } = await client.rpc("fetch_client_automations", {
+    p_client_id: clientId,
+  });
+  if (error) throw error;
+  return ((data ?? []) as ClientAutomationAssignmentRow[]).map((row) =>
+    mapClientAutomationAssignmentRow(row)
+  );
+}
+
+export async function runDueAutomationSteps(input?: {
+  now?: string;
+  limit?: number;
+  clientId?: string;
+  coachId?: string;
+}): Promise<{ processed: number; executed: number; failed: number }> {
+  const client = getClient();
+  const { data, error } = await client.rpc("run_due_automation_steps", {
+    p_now: input?.now ?? null,
+    p_limit: input?.limit ?? 200,
+    p_client_id: input?.clientId ?? null,
+    p_coach_id: input?.coachId ?? null,
+  });
+  if (error) throw error;
+  const result = (data ?? {}) as Record<string, unknown>;
+  return {
+    processed: Number(result.processed ?? 0),
+    executed: Number(result.executed ?? 0),
+    failed: Number(result.failed ?? 0),
+  };
+}
+
 // Storage helpers
 export async function uploadVaultFile(coachId: string, folderId: number, file: File): Promise<{ path: string; size: number }> {
   const client = getClient();
@@ -4343,6 +4615,13 @@ export async function sendPasswordReset(email: string, redirectTo?: string): Pro
   if (error) throw error;
 }
 
+const CURRICULUM_DEPRECATION_MESSAGE =
+  "Curriculum automation is deprecated in this build. Use assignment automations instead.";
+
+function assertCurriculumEnabled(): void {
+  throw new Error(CURRICULUM_DEPRECATION_MESSAGE);
+}
+
 type CurriculumProgramRow = {
   id: number;
   coach_id: string;
@@ -4563,6 +4842,7 @@ export async function upsertCurriculumProgram(input: {
   isActive?: boolean;
   seedDefaults?: boolean;
 }): Promise<CurriculumProgram | null> {
+  assertCurriculumEnabled();
   const client = getClient();
   const { data, error } = await client.rpc("upsert_curriculum_program", {
     p_id: input.id ?? null,
@@ -4586,6 +4866,7 @@ export async function upsertCourseCurriculumProgram(input: {
   programMode?: "off" | "evergreen" | "cohort_date";
   cohortStartDate?: string | null;
 }): Promise<CurriculumProgram | null> {
+  assertCurriculumEnabled();
   const client = getClient();
   const { data, error } = await client.rpc("upsert_course_curriculum_program", {
     p_course_folder_id: input.courseFolderId,
@@ -4612,6 +4893,7 @@ export async function upsertCurriculumWeek(input: {
   summaryPrompt?: string | null;
   seedTouchpoints?: boolean;
 }): Promise<CurriculumWeek | null> {
+  assertCurriculumEnabled();
   const client = getClient();
   const { data, error } = await client.rpc("upsert_curriculum_week", {
     p_id: input.id ?? null,
@@ -4641,6 +4923,7 @@ export async function upsertCurriculumTouchpoints(
     sortOrder?: number;
   }>
 ): Promise<number> {
+  assertCurriculumEnabled();
   const client = getClient();
   const payload = touchpoints.map((entry) => ({
     kind: entry.kind,
@@ -4660,6 +4943,7 @@ export async function upsertCurriculumTouchpoints(
 }
 
 export async function fetchCurriculumPrograms(): Promise<CurriculumProgram[]> {
+  assertCurriculumEnabled();
   const client = getClient();
   const { data, error } = await client
     .from("curriculum_programs")
@@ -4670,6 +4954,7 @@ export async function fetchCurriculumPrograms(): Promise<CurriculumProgram[]> {
 }
 
 export async function fetchCurriculumWeeks(programId: number): Promise<CurriculumWeek[]> {
+  assertCurriculumEnabled();
   const client = getClient();
   const { data, error } = await client
     .from("curriculum_weeks")
@@ -4681,6 +4966,7 @@ export async function fetchCurriculumWeeks(programId: number): Promise<Curriculu
 }
 
 export async function fetchCurriculumTouchpoints(weekId: number): Promise<CurriculumTouchpoint[]> {
+  assertCurriculumEnabled();
   const client = getClient();
   const { data, error } = await client
     .from("curriculum_touchpoints")
@@ -4693,6 +4979,7 @@ export async function fetchCurriculumTouchpoints(weekId: number): Promise<Curric
 }
 
 export async function fetchCourseCurriculum(courseFolderId: number): Promise<CourseAutomationSummary> {
+  assertCurriculumEnabled();
   const client = getClient();
   const { data, error } = await client.rpc("fetch_course_curriculum", {
     p_course_folder_id: courseFolderId,
@@ -4713,6 +5000,7 @@ export async function enrollClientInCurriculum(input: {
   startDate?: string;
   timezone?: string | null;
 }): Promise<CurriculumEnrollment | null> {
+  assertCurriculumEnabled();
   const client = getClient();
   const { data, error } = await client.rpc("enroll_client_in_curriculum", {
     p_client_id: input.clientId,
@@ -4730,6 +5018,7 @@ export async function pauseCurriculumEnrollment(
   enrollmentId: number,
   pausedFrom?: string
 ): Promise<CurriculumEnrollment | null> {
+  assertCurriculumEnabled();
   const client = getClient();
   const { data, error } = await client.rpc("pause_curriculum_enrollment", {
     p_enrollment_id: enrollmentId,
@@ -4745,6 +5034,7 @@ export async function resumeCurriculumEnrollment(
   enrollmentId: number,
   resumeOn?: string
 ): Promise<CurriculumEnrollment | null> {
+  assertCurriculumEnabled();
   const client = getClient();
   const { data, error } = await client.rpc("resume_curriculum_enrollment", {
     p_enrollment_id: enrollmentId,
@@ -4757,6 +5047,7 @@ export async function resumeCurriculumEnrollment(
 }
 
 export async function fetchClientCurriculumDashboard(clientId?: string): Promise<ClientCurriculumDashboard | null> {
+  assertCurriculumEnabled();
   const client = getClient();
   const { data, error } = await client.rpc("fetch_client_curriculum_dashboard", {
     p_client_id: clientId ?? null,
@@ -4767,6 +5058,7 @@ export async function fetchClientCurriculumDashboard(clientId?: string): Promise
 }
 
 export async function fetchCoachCurriculumOverview(coachId?: string): Promise<CoachCurriculumOverviewItem[]> {
+  assertCurriculumEnabled();
   const client = getClient();
   const { data, error } = await client.rpc("fetch_coach_curriculum_overview", {
     p_coach_id: coachId ?? null,
