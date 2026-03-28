@@ -495,7 +495,7 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
       <section className="pt-1 space-y-2">
         <h3 className="text-sm font-semibold">Coach Notes</h3>
         <p className="text-xs text-muted">Use this while reviewing check-ins. Notes stay private to coach view.</p>
-        <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+        <div className="max-h-56 overflow-y-auto space-y-2 pr-1 pb-3">
           {notes.length === 0 && <p className="text-xs text-muted py-1">No notes yet.</p>}
           {notes.map((note) => (
             <div key={note.id} className="rounded-lg bg-black/[0.03] px-3 py-2">
@@ -554,21 +554,25 @@ export function CheckinsPanel({ clientId }: { clientId: string }) {
             </div>
           ))}
         </div>
-        <div className="flex items-center gap-2">
-          <textarea
-            value={noteDraft}
-            onChange={(e) => setNoteDraft(e.target.value)}
-            rows={2}
-            placeholder="Add a note while reviewing..."
-            className="flex-1 px-3 py-2 rounded-lg bg-black/5 border border-black/10 text-sm resize-none"
-          />
-          <button
-            onClick={handleAddNote}
-            disabled={!noteDraft.trim()}
-            className="w-9 h-9 rounded-lg bg-accent text-white flex items-center justify-center hover:bg-accent-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-          >
-            <Plus size={16} />
-          </button>
+        <div className="sticky bottom-0 z-10 pt-1">
+          <div className="rounded-2xl border border-black/10 bg-white/95 backdrop-blur-sm px-3 py-3 shadow-[0_14px_34px_rgba(0,0,0,0.08)]">
+            <div className="flex items-center gap-2">
+              <textarea
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                rows={2}
+                placeholder="Add a note while reviewing..."
+                className="flex-1 px-3 py-2 rounded-lg bg-black/5 border border-black/10 text-sm resize-none"
+              />
+              <button
+                onClick={handleAddNote}
+                disabled={!noteDraft.trim()}
+                className="w-9 h-9 rounded-lg bg-accent text-white flex items-center justify-center hover:bg-accent-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+          </div>
         </div>
       </section>
 

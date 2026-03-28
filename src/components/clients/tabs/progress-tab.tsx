@@ -36,6 +36,7 @@ function LineChart({
   valueFormatter,
   movingAverage,
   tooltipRows,
+  fullBleed = false,
 }: {
   data: { date: string; value: number }[];
   color: string;
@@ -44,6 +45,7 @@ function LineChart({
   valueFormatter?: (value: number) => string;
   movingAverage?: { enabled: boolean; window?: number; color?: string };
   tooltipRows?: (index: number) => Array<{ label: string; value: string }>;
+  fullBleed?: boolean;
 }) {
   const gradientId = useId().replace(/:/g, "");
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
@@ -90,7 +92,9 @@ function LineChart({
     );
   }
 
-  const padding = { top: 20, right: 20, bottom: 30, left: 50 };
+  const padding = fullBleed
+    ? { top: 20, right: 18, bottom: 30, left: 58 }
+    : { top: 20, right: 20, bottom: 30, left: 50 };
   const width = 500;
   const chartW = width - padding.left - padding.right;
   const chartH = height - padding.top - padding.bottom;
@@ -163,7 +167,13 @@ function LineChart({
   const formattedHoveredDate = hoveredPoint ? formatTooltipDate(hoveredPoint.date) : "";
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ maxHeight: height }}>
+    <div className={fullBleed ? "-mx-2 sm:-mx-3" : ""}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio={fullBleed ? "none" : undefined}
+        className="w-full"
+        style={fullBleed ? { height } : { maxHeight: height }}
+      >
       <defs>
         <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
           <stop offset="0%" stopColor={color} stopOpacity={0.36} />
@@ -327,7 +337,8 @@ function LineChart({
           ))}
         </g>
       )}
-    </svg>
+      </svg>
+    </div>
   );
 }
 
@@ -1374,7 +1385,8 @@ function ActivitySessionsSection({
                             value: h.bpm,
                           }))}
                           color={meta.color}
-                          height={170}
+                          height={340}
+                          fullBleed
                           valueFormatter={(value) => `${Math.round(value)} bpm`}
                         />
                       </div>
@@ -1911,6 +1923,7 @@ export function ProgressTab({ clientId }: { clientId: string }) {
                       data={e1rmChartData}
                       color="#c4841d"
                       height={180}
+                      fullBleed
                       valueFormatter={(value) => `${value.toFixed(1)} kg`}
                       tooltipRows={(index) => {
                         const session = e1rmSessions[index];
@@ -1929,6 +1942,7 @@ export function ProgressTab({ clientId }: { clientId: string }) {
                       data={volumeChartData}
                       color="#2d8a4e"
                       height={180}
+                      fullBleed
                       valueFormatter={(value) =>
                         latestExerciseSession?.volumeUnit === "kg"
                           ? `${Math.round(value).toLocaleString()} kg`

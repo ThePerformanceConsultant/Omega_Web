@@ -35,6 +35,13 @@ export function ChatPanel({ clientId }: { clientId: string }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const orderedMessages = useMemo(
+    () =>
+      [...messages].sort(
+        (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime(),
+      ),
+    [messages],
+  );
 
   useEffect(() => {
     const supabase = createClient();
@@ -50,7 +57,7 @@ export function ChatPanel({ clientId }: { clientId: string }) {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages.length]);
+  }, [orderedMessages.length, conv?.id]);
 
   useEffect(() => {
     if (conv && conv.unreadCount > 0) {
@@ -65,12 +72,12 @@ export function ChatPanel({ clientId }: { clientId: string }) {
   const dateSepSet = useMemo(() => {
     const set = new Set<string>();
     let prev = "";
-    for (const msg of messages) {
+    for (const msg of orderedMessages) {
       const dateStr = new Date(msg.sentAt).toDateString();
       if (dateStr !== prev) { set.add(msg.id); prev = dateStr; }
     }
     return set;
-  }, [messages]);
+  }, [orderedMessages]);
 
   // Auto-resize textarea
   const autoResize = useCallback(() => {
@@ -172,16 +179,16 @@ export function ChatPanel({ clientId }: { clientId: string }) {
   }
 
   return (
-    <div className="flex flex-col h-full -mx-4 -mb-4">
+    <div className="relative h-full">
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-1">
-        {messages.length === 0 && (
+      <div ref={scrollRef} className="h-full overflow-y-auto pr-1 pt-1 pb-44 space-y-1">
+        {orderedMessages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-muted">
             <MessageCircle size={36} className="mb-2 opacity-30" />
             <p className="text-xs">{conv ? "Send a message to start the conversation" : "Type a message to start chatting"}</p>
           </div>
         )}
-        {messages.map((msg) => {
+        {orderedMessages.map((msg) => {
           const showDateSep = dateSepSet.has(msg.id);
           const isCoach = msg.senderRole === "coach";
 
@@ -227,61 +234,63 @@ export function ChatPanel({ clientId }: { clientId: string }) {
       </div>
 
       {/* Input — always visible even when no conversation exists */}
-      <div className="px-5 py-3 border-t border-black/10 bg-white/50 shrink-0">
-        {attachmentPreview && (
-          <div className="mb-3 flex items-start gap-2">
-            <img
-              src={attachmentPreview}
-              alt="Attachment preview"
-              className="h-20 w-20 rounded-xl object-cover border border-black/10"
+      <div className="absolute left-0 right-0 bottom-0 z-20 pb-1">
+        <div className="rounded-2xl border border-black/10 bg-white/95 backdrop-blur-sm px-3 py-3 shadow-[0_14px_34px_rgba(0,0,0,0.08)]">
+          {attachmentPreview && (
+            <div className="mb-3 flex items-start gap-2">
+              <img
+                src={attachmentPreview}
+                alt="Attachment preview"
+                className="h-20 w-20 rounded-xl object-cover border border-black/10"
+              />
+              <button
+                onClick={clearAttachment}
+                className="px-2 py-1 rounded-lg text-xs border border-black/15 text-muted hover:text-foreground"
+              >
+                Remove image
+              </button>
+            </div>
+          )}
+          {sendError && <p className="mb-2 text-xs text-danger">{sendError}</p>}
+          <div className="flex items-end gap-3">
+            <EmojiPicker onSelect={handleEmojiInsert} disabled={creating || sending} />
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleAttachmentChange}
+              className="hidden"
             />
             <button
-              onClick={clearAttachment}
-              className="px-2 py-1 rounded-lg text-xs border border-black/15 text-muted hover:text-foreground"
+              type="button"
+              onClick={() => imageInputRef.current?.click()}
+              className="w-9 h-9 rounded-full bg-black/5 text-muted flex items-center justify-center hover:text-foreground transition-colors shrink-0"
+              title="Attach image"
             >
-              Remove image
+              <ImagePlus size={16} />
+            </button>
+            <textarea
+              ref={textareaRef}
+              placeholder="Type a message..."
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void handleSend();
+                }
+              }}
+              rows={1}
+              className="flex-1 px-4 py-2.5 rounded-2xl bg-black/5 border border-black/10 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/25 resize-none overflow-hidden"
+            />
+            <button
+              onClick={() => void handleSend()}
+              disabled={creating || sending || (!draft.trim() && !attachmentFile)}
+              className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center hover:bg-accent-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            >
+              <Send size={16} />
             </button>
           </div>
-        )}
-        {sendError && <p className="mb-2 text-xs text-danger">{sendError}</p>}
-        <div className="flex items-end gap-3">
-          <EmojiPicker onSelect={handleEmojiInsert} disabled={creating || sending} />
-          <input
-            ref={imageInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleAttachmentChange}
-            className="hidden"
-          />
-          <button
-            type="button"
-            onClick={() => imageInputRef.current?.click()}
-            className="w-9 h-9 rounded-full bg-black/5 text-muted flex items-center justify-center hover:text-foreground transition-colors shrink-0"
-            title="Attach image"
-          >
-            <ImagePlus size={16} />
-          </button>
-          <textarea
-            ref={textareaRef}
-            placeholder="Type a message..."
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void handleSend();
-              }
-            }}
-            rows={1}
-            className="flex-1 px-4 py-2.5 rounded-2xl bg-black/5 border border-black/10 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/25 resize-none overflow-hidden"
-          />
-          <button
-            onClick={() => void handleSend()}
-            disabled={creating || sending || (!draft.trim() && !attachmentFile)}
-            className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center hover:bg-accent-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-          >
-            <Send size={16} />
-          </button>
         </div>
       </div>
     </div>
