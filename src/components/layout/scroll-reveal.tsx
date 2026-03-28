@@ -7,15 +7,7 @@ export function ScrollRevealProvider() {
   const pathname = usePathname();
 
   useEffect(() => {
-    const nodes = Array.from(document.querySelectorAll<HTMLElement>(".reveal-on-scroll"));
-    if (nodes.length === 0) return;
-
     const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (prefersReduced) {
-      nodes.forEach((node) => node.classList.add("is-visible"));
-      return;
-    }
-
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -27,12 +19,35 @@ export function ScrollRevealProvider() {
       { threshold: 0.14, rootMargin: "0px 0px -8% 0px" },
     );
 
-    nodes.forEach((node, index) => {
+    function registerNode(node: HTMLElement, index: number) {
+      if (prefersReduced) {
+        node.classList.remove("reveal-init");
+        node.classList.add("is-visible");
+        return;
+      }
+      if (!node.classList.contains("reveal-init")) {
+        node.classList.add("reveal-init");
+      }
       node.style.setProperty("--reveal-delay", `${Math.min(index * 32, 220)}ms`);
       observer.observe(node);
-    });
+    }
 
-    return () => observer.disconnect();
+    function scan() {
+      const nodes = Array.from(document.querySelectorAll<HTMLElement>(".reveal-on-scroll"));
+      nodes.forEach((node, index) => registerNode(node, index));
+    }
+
+    scan();
+
+    const mutationObserver = new MutationObserver(() => {
+      scan();
+    });
+    mutationObserver.observe(document.body, { childList: true, subtree: true });
+
+    return () => {
+      observer.disconnect();
+      mutationObserver.disconnect();
+    };
   }, [pathname]);
 
   return null;

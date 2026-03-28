@@ -7,16 +7,21 @@ import {
   Bell,
   Check,
   CheckCheck,
+  CalendarDays,
   CheckSquare,
   ChevronDown,
   ClipboardList,
+  Dumbbell,
   Info,
+  LayoutDashboard,
   MessageCircle,
   Search,
   Settings,
   StickyNote,
+  TrendingUp,
+  UtensilsCrossed,
 } from "lucide-react";
-import type { ClientPanelType, NotificationItem } from "@/lib/types";
+import type { ClientPanelType, ClientSubTab, NotificationItem } from "@/lib/types";
 import { isSupabaseConfigured } from "@/lib/supabase/db";
 import {
   notificationStore,
@@ -52,6 +57,18 @@ const CLIENT_PANELS: Array<{
   { key: "checkins", label: "Check-ins", icon: ClipboardList },
   { key: "notes", label: "Notes", icon: StickyNote },
   { key: "info", label: "Info", icon: Info },
+];
+
+const CLIENT_TABS: Array<{
+  key: ClientSubTab;
+  label: string;
+  icon: React.ComponentType<{ size?: number }>;
+}> = [
+  { key: "overview", label: "Overview", icon: LayoutDashboard },
+  { key: "workouts", label: "Workouts", icon: Dumbbell },
+  { key: "nutrition", label: "Nutrition", icon: UtensilsCrossed },
+  { key: "progress", label: "Progress", icon: TrendingUp },
+  { key: "roadmap", label: "Roadmap", icon: CalendarDays },
 ];
 
 function timeAgo(iso: string): string {
@@ -170,7 +187,7 @@ export function TopBar() {
   const switcherRef = useRef<HTMLDivElement | null>(null);
   const notifications = useNotifications();
   const unreadCount = useNotificationUnreadCount();
-  const { clients, selectedClientId, activePanel } = useClientViewState();
+  const { clients, selectedClientId, activePanel, activeSubTab } = useClientViewState();
 
   const selectedClient = useMemo(
     () => clients.find((client) => client.id === selectedClientId) ?? null,
@@ -245,10 +262,11 @@ export function TopBar() {
   }
 
   return (
-    <header className="sticky top-0 z-20 flex items-center justify-between gap-4 px-8 py-4 border-b border-border-accent bg-background/92 backdrop-blur-md">
+    <header className="sticky top-0 z-20 px-8 py-4 border-b border-border-accent bg-background/92 backdrop-blur-md">
       {isClientDetail && selectedClient ? (
-        <>
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="w-full flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-4 min-w-0">
+            <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => clientViewStore.clearSelectedClient()}
               className="p-2 rounded-lg border border-black/10 text-muted hover:text-foreground hover:bg-black/[0.04] transition-colors"
@@ -260,7 +278,7 @@ export function TopBar() {
             <div className="relative min-w-0" ref={switcherRef}>
               <button
                 onClick={() => setIsClientSwitcherOpen((open) => !open)}
-                className="flex items-center gap-3 rounded-xl border border-black/10 bg-white px-3 py-1.5 min-w-[320px] hover:bg-black/[0.02] transition-colors"
+                className="flex items-center gap-3 rounded-xl bg-transparent px-1.5 py-1 min-w-[320px] hover:bg-black/[0.02] transition-colors"
               >
                 <Avatar initials={selectedClient.avatar_initials || "?"} size={40} />
                 <div className="min-w-0 text-left">
@@ -333,9 +351,28 @@ export function TopBar() {
               );
             })}
           </div>
-        </>
+          </div>
+
+          <div className="flex items-center gap-1 border-t border-black/10 pt-2">
+            {CLIENT_TABS.map((tab) => {
+              const isActive = activeSubTab === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => clientViewStore.setActiveSubTab(tab.key)}
+                  className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors rounded-md ${
+                    isActive ? "text-accent bg-accent/8" : "text-muted hover:text-foreground hover:bg-black/[0.03]"
+                  }`}
+                >
+                  <tab.icon size={15} />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       ) : (
-        <>
+        <div className="flex items-center justify-between gap-4">
           <h2 className="text-lg font-semibold">{title}</h2>
 
           <div className="flex items-center gap-3">
@@ -419,7 +456,7 @@ export function TopBar() {
               )}
             </div>
           </div>
-        </>
+        </div>
       )}
     </header>
   );

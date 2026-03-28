@@ -1,18 +1,20 @@
 "use client";
 
 import { useMemo, useSyncExternalStore } from "react";
-import type { Client, ClientPanelType } from "./types";
+import type { Client, ClientPanelType, ClientSubTab } from "./types";
 
 type ClientViewState = {
   clients: Client[];
   selectedClientId: string | null;
   activePanel: ClientPanelType;
+  activeSubTab: ClientSubTab;
 };
 
 let state: ClientViewState = {
   clients: [],
   selectedClientId: null,
   activePanel: null,
+  activeSubTab: "overview",
 };
 
 const listeners = new Set<() => void>();
@@ -39,6 +41,7 @@ export const clientViewStore = {
       clients,
       selectedClientId: selectedStillExists ? state.selectedClientId : null,
       activePanel: selectedStillExists ? state.activePanel : null,
+      activeSubTab: selectedStillExists ? state.activeSubTab : "overview",
     });
   },
 
@@ -57,6 +60,10 @@ export const clientViewStore = {
 
   setActivePanel(panel: ClientPanelType) {
     setState({ activePanel: panel });
+  },
+
+  setActiveSubTab(tab: ClientSubTab) {
+    setState({ activeSubTab: tab });
   },
 
   subscribe(listener: () => void) {

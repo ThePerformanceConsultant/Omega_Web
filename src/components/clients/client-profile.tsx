@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { Client, ClientSubTab } from "@/lib/types";
 import { clientStore } from "@/lib/client-store";
 import { clientViewStore, useClientViewState } from "@/lib/client-view-store";
 import { createClient } from "@/lib/supabase/client";
-import { SubTabBar } from "./sub-tab-bar";
 import { SidePanel } from "./side-panel";
 import { ChatPanel } from "./chat-panel";
 import { TasksPanel } from "./tasks-panel";
@@ -33,8 +32,7 @@ export function ClientProfile({
   client: Client;
   initialTab?: ClientSubTab;
 }) {
-  const { activePanel } = useClientViewState();
-  const [activeSubTab, setActiveSubTab] = useState<ClientSubTab>(initialTab ?? "overview");
+  const { activePanel, activeSubTab } = useClientViewState();
 
   // Hydrate tasks & notes for this client
   useEffect(() => {
@@ -45,25 +43,22 @@ export function ClientProfile({
     clientStore.hydrateClient(client.id);
   }, [client.id]);
 
+  useEffect(() => {
+    if (initialTab) {
+      clientViewStore.setActiveSubTab(initialTab);
+    }
+  }, [initialTab]);
+
   return (
     <div className="space-y-4">
-      {/* Sub-tab navigation */}
-      <SubTabBar activeTab={activeSubTab} onTabChange={setActiveSubTab} />
-
-      {/* Flex row: main content + flush side panel */}
-      <div
-        className={`flex min-h-[calc(100vh-200px)] ${
-          activePanel ? "-mr-8 -mb-8" : ""
-        }`}
-      >
-        {/* Main content — shrinks when panel is open */}
+      <div className="relative min-h-[calc(100vh-200px)]">
         <div
-          className={`transition-all duration-300 min-w-0 ${
-            activePanel ? "flex-[65] pr-5" : "w-full"
+          className={`transition-all duration-500 ease-out min-w-0 ${
+            activePanel ? "pr-[min(38vw,560px)]" : "w-full"
           }`}
         >
           {activeSubTab === "overview" && (
-            <OverviewTab client={client} onNavigateToTab={setActiveSubTab} />
+            <OverviewTab client={client} onNavigateToTab={clientViewStore.setActiveSubTab} />
           )}
           {activeSubTab === "workouts" && (
             <WorkoutsTab clientId={client.id} />
@@ -79,18 +74,19 @@ export function ClientProfile({
           )}
         </div>
 
-        {/* Inline side panel — flush right + bottom, no overlay */}
         {activePanel && (
-          <SidePanel
-            title={PANEL_TITLES[activePanel]}
-            onClose={() => clientViewStore.setActivePanel(null)}
-          >
-            {activePanel === "chat" && <ChatPanel clientId={client.id} />}
-            {activePanel === "tasks" && <TasksPanel clientId={client.id} />}
-            {activePanel === "checkins" && <CheckinsPanel clientId={client.id} />}
-            {activePanel === "notes" && <NotesPanel clientId={client.id} />}
-            {activePanel === "info" && <InfoPanel clientId={client.id} />}
-          </SidePanel>
+          <div className="absolute right-0 top-0 bottom-0 w-[min(38vw,560px)] animate-panel-in-right">
+            <SidePanel
+              title={PANEL_TITLES[activePanel]}
+              onClose={() => clientViewStore.setActivePanel(null)}
+            >
+              {activePanel === "chat" && <ChatPanel clientId={client.id} />}
+              {activePanel === "tasks" && <TasksPanel clientId={client.id} />}
+              {activePanel === "checkins" && <CheckinsPanel clientId={client.id} />}
+              {activePanel === "notes" && <NotesPanel clientId={client.id} />}
+              {activePanel === "info" && <InfoPanel clientId={client.id} />}
+            </SidePanel>
+          </div>
         )}
       </div>
     </div>

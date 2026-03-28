@@ -10,7 +10,7 @@ interface SidePanelProps {
 
 export function SidePanel({ title, onClose, children }: SidePanelProps) {
   return (
-    <div className="flex-[35] min-w-0 border-l border-black/10 bg-white flex flex-col self-stretch">
+    <div className="h-full min-w-0 border-l border-black/10 bg-white/98 backdrop-blur-[2px] flex flex-col self-stretch shadow-[-8px_0_24px_rgba(0,0,0,0.05)]">
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-black/10 shrink-0 sticky top-0 bg-white z-10">
         <h2 className="text-base font-semibold">{title}</h2>
