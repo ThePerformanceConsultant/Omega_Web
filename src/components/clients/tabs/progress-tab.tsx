@@ -1177,6 +1177,8 @@ function ActivitySessionsSection({
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [periodDays, setPeriodDays] = useState(30);
+  const [page, setPage] = useState(0);
+  const sessionsPerPage = 10;
 
   const filtered = useMemo(() => {
     if (periodDays === 0) return sessions;
@@ -1214,6 +1216,23 @@ function ActivitySessionsSection({
     return ids;
   }, [filtered]);
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / sessionsPerPage));
+  const pagedSessions = useMemo(() => {
+    const start = page * sessionsPerPage;
+    return filtered.slice(start, start + sessionsPerPage);
+  }, [filtered, page]);
+
+  useEffect(() => {
+    setPage(0);
+    setExpandedId(null);
+  }, [periodDays, filtered.length]);
+
+  useEffect(() => {
+    if (page > totalPages - 1) {
+      setPage(totalPages - 1);
+    }
+  }, [page, totalPages]);
+
   return (
     <div className="glass-card p-5 reveal-on-scroll">
       <div className="flex items-center justify-between mb-4">
@@ -1229,7 +1248,7 @@ function ActivitySessionsSection({
         <p className="text-sm text-muted text-center py-6">No activity sessions in this period</p>
       ) : (
         <div className="space-y-2">
-          {filtered.map((s) => {
+          {pagedSessions.map((s) => {
             const meta = getActivityMeta(s.activityTypeRaw);
             const isOpen = expandedId === s.id;
             const durationMin = Math.round(s.durationSeconds / 60);
@@ -1389,6 +1408,46 @@ function ActivitySessionsSection({
               </div>
             );
           })}
+          {filtered.length > sessionsPerPage && (
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 mt-3 border-t border-black/5">
+              <p className="text-xs text-muted">
+                Showing {Math.min((page + 1) * sessionsPerPage, filtered.length)} of {filtered.length} sessions
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPage((prev) => Math.max(0, prev - 1))}
+                  disabled={page === 0}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-black/10 text-xs text-muted hover:text-foreground hover:bg-black/[0.03] disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <ChevronLeft size={12} />
+                  Previous
+                </button>
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: totalPages }, (_, index) => (
+                    <button
+                      key={index}
+                      onClick={() => setPage(index)}
+                      className={`w-7 h-7 rounded-full text-xs font-medium transition-colors ${
+                        index === page
+                          ? "bg-black/10 text-foreground"
+                          : "text-muted hover:bg-black/[0.04]"
+                      }`}
+                    >
+                      {index + 1}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setPage((prev) => Math.min(totalPages - 1, prev + 1))}
+                  disabled={page === totalPages - 1}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-black/10 text-xs text-muted hover:text-foreground hover:bg-black/[0.03] disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Next
+                  <ChevronRight size={12} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1891,6 +1950,28 @@ export function ProgressTab({ clientId }: { clientId: string }) {
                     <div className="space-y-2">
                       {[...filteredExerciseSessions].reverse().map((session) => {
                         const isOpen = expandedExerciseSessions.has(session.logId);
+                        const weightPbSetNumber = session.isWeightPb
+                          ? session.setLogs.reduce<SetLogEntry | null>((best, setLog) => {
+                              if (setLog.weight <= 0 || setLog.reps <= 0) return best;
+                              if (!best) return setLog;
+                              if (setLog.weight > best.weight) return setLog;
+                              if (setLog.weight === best.weight && setLog.reps > best.reps) return setLog;
+                              return best;
+                            }, null)?.setNumber ?? null
+                          : null;
+                        const volumePbSetNumber = session.isVolumePb
+                          ? session.setLogs.reduce<SetLogEntry | null>((best, setLog) => {
+                              const currentValue = session.volumeUnit === "kg"
+                                ? Math.max(0, setLog.weight) * Math.max(0, setLog.reps)
+                                : Math.max(0, setLog.reps);
+                              if (currentValue <= 0) return best;
+                              if (!best) return setLog;
+                              const bestValue = session.volumeUnit === "kg"
+                                ? Math.max(0, best.weight) * Math.max(0, best.reps)
+                                : Math.max(0, best.reps);
+                              return currentValue > bestValue ? setLog : best;
+                            }, null)?.setNumber ?? null
+                          : null;
                         return (
                           <div key={`${session.logId}-${session.date}`} className="rounded-lg border border-black/10 overflow-hidden">
                             <button
@@ -1933,23 +2014,7 @@ export function ProgressTab({ clientId }: { clientId: string }) {
 
                             {isOpen && (
                               <div className="border-t border-black/10 px-3 py-2.5">
-                                <div className="flex items-center justify-between gap-2 mb-2">
-                                  <p className="text-xs text-muted">{effectiveExercise}</p>
-                                  <div className="flex items-center gap-2">
-                                    {session.isWeightPb && (
-                                      <span className="inline-flex items-center gap-1 text-[11px] text-success font-semibold">
-                                        <Dumbbell size={12} />
-                                        Weight PB
-                                      </span>
-                                    )}
-                                    {session.isVolumePb && (
-                                      <span className="inline-flex items-center gap-1 text-[11px] text-accent font-semibold">
-                                        <BarChart3 size={12} />
-                                        Volume PB
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
+                                <p className="text-xs text-muted mb-2">{effectiveExercise}</p>
                                 <table className="w-full text-xs">
                                   <thead>
                                     <tr className="text-left text-muted">
@@ -1960,14 +2025,32 @@ export function ProgressTab({ clientId }: { clientId: string }) {
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {session.setLogs.map((setLog) => (
+                                    {session.setLogs.map((setLog) => {
+                                      const isWeightPbSet = weightPbSetNumber !== null && setLog.setNumber === weightPbSetNumber;
+                                      const isVolumePbSet = volumePbSetNumber !== null && setLog.setNumber === volumePbSetNumber;
+                                      return (
                                       <tr key={`${session.logId}-${setLog.setNumber}`} className="border-t border-black/5">
-                                        <td className="py-1.5">{setLog.setNumber}</td>
+                                        <td className="py-1.5">
+                                          <div className="inline-flex items-center gap-1.5">
+                                            <span>{setLog.setNumber}</span>
+                                            {isWeightPbSet && (
+                                              <span className="text-success" title="Weight PB set">
+                                                <Dumbbell size={11} />
+                                              </span>
+                                            )}
+                                            {isVolumePbSet && (
+                                              <span className="text-accent" title="Volume PB set">
+                                                <BarChart3 size={11} />
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
                                         <td className="py-1.5">{setLog.weight || "—"}</td>
                                         <td className="py-1.5">{setLog.reps || "—"}</td>
                                         <td className="py-1.5">{setLog.rpe ?? "—"}</td>
                                       </tr>
-                                    ))}
+                                      );
+                                    })}
                                   </tbody>
                                 </table>
                               </div>

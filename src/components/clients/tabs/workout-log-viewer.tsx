@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Dumbbell, ArrowLeft, Clock, TrendingUp, Star, Activity, Zap, Flame, Trophy, Check, X } from "lucide-react";
+import { Dumbbell, ArrowLeft, Clock, TrendingUp, Star, Activity, Zap, Flame, Trophy, Check, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { WorkoutLogEntry } from "@/lib/types";
 import { fetchWorkoutLogs } from "@/lib/supabase/db";
 
@@ -327,6 +327,8 @@ export function WorkoutLogViewer({ clientId }: { clientId: string }) {
   const [logs, setLogs] = useState<WorkoutLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedLog, setSelectedLog] = useState<WorkoutLogEntry | null>(null);
+  const [page, setPage] = useState(0);
+  const rowsPerPage = 10;
 
   useEffect(() => {
     let cancelled = false;
@@ -345,6 +347,10 @@ export function WorkoutLogViewer({ clientId }: { clientId: string }) {
     load();
     return () => { cancelled = true; };
   }, [clientId]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [clientId, logs.length]);
 
   if (selectedLog) {
     return <WorkoutLogDetail entry={selectedLog} allLogs={logs} onBack={() => setSelectedLog(null)} />;
@@ -368,6 +374,10 @@ export function WorkoutLogViewer({ clientId }: { clientId: string }) {
     );
   }
 
+  const totalPages = Math.max(1, Math.ceil(logs.length / rowsPerPage));
+  const currentPage = Math.min(page, totalPages - 1);
+  const visibleLogs = logs.slice(currentPage * rowsPerPage, (currentPage + 1) * rowsPerPage);
+
   // ─── List View ───
   return (
     <div className="glass-card p-0 overflow-hidden">
@@ -385,7 +395,7 @@ export function WorkoutLogViewer({ clientId }: { clientId: string }) {
             </tr>
           </thead>
           <tbody>
-            {logs.map((log) => (
+            {visibleLogs.map((log) => (
               <tr
                 key={log.id}
                 onClick={() => setSelectedLog(log)}
@@ -421,6 +431,46 @@ export function WorkoutLogViewer({ clientId }: { clientId: string }) {
           </tbody>
         </table>
       </div>
+      {logs.length > rowsPerPage && (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-t border-black/5 bg-black/[0.01]">
+          <p className="text-xs text-muted">
+            Showing {Math.min((currentPage + 1) * rowsPerPage, logs.length)} of {logs.length} sessions
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((prev) => Math.max(0, prev - 1))}
+              disabled={currentPage === 0}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-black/10 text-xs text-muted hover:text-foreground hover:bg-black/[0.03] disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft size={12} />
+              Previous
+            </button>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: totalPages }, (_, index) => (
+                <button
+                  key={index}
+                  onClick={() => setPage(index)}
+                  className={`w-7 h-7 rounded-full text-xs font-medium transition-colors ${
+                    index === currentPage
+                      ? "bg-black/10 text-foreground"
+                      : "text-muted hover:bg-black/[0.04]"
+                  }`}
+                >
+                  {index + 1}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setPage((prev) => Math.min(totalPages - 1, prev + 1))}
+              disabled={currentPage === totalPages - 1}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-black/10 text-xs text-muted hover:text-foreground hover:bg-black/[0.03] disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Next
+              <ChevronRight size={12} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
