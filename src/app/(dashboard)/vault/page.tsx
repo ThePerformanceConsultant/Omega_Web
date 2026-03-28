@@ -20,10 +20,7 @@ import {
   Lightbulb,
   Save,
   RefreshCw,
-  Sparkles,
   ChevronDown,
-  ListChecks,
-  AlertTriangle,
 } from "lucide-react";
 import {
   getCoachId,
@@ -41,6 +38,9 @@ import {
   fetchCourseAccess,
   grantCourseAccess,
   revokeCourseAccess,
+  fetchResourceAccess,
+  grantResourceAccess,
+  revokeResourceAccess,
   fetchClients,
   fetchCoachInsights,
   createCoachInsight,
@@ -48,13 +48,6 @@ import {
   deleteCoachInsight,
   fetchCoachInsightSettings,
   upsertCoachInsightSettings,
-  upsertCourseCurriculumProgram,
-  fetchCourseCurriculum,
-  upsertCurriculumWeek,
-  upsertCurriculumTouchpoints,
-  enrollClientInCurriculum,
-  pauseCurriculumEnrollment,
-  resumeCurriculumEnrollment,
 } from "@/lib/supabase/db";
 import type {
   VaultSection,
@@ -65,11 +58,6 @@ import type {
   CoachInsight,
   CoachInsightSettings,
   InsightCadenceUnit,
-  CurriculumTouchpoint,
-  CourseAutomationProgramMode,
-  CourseAutomationSummary,
-  CourseWeekPlanRow,
-  CourseAutomationEnrollmentRow,
 } from "@/lib/types";
 
 // ─── Helpers ───
@@ -181,180 +169,6 @@ function getMaxDepth(section: VaultSection): number {
   // Resources: root(0) → folder(1) → sub-folder(2) → items only
   // Courses:   root(0) → course(1) → module(2) → lesson(3) → items only
   return section === "resources" ? 2 : 3;
-}
-
-function buildDefaultCurriculumTouchpoints(): Array<{
-  kind: CurriculumTouchpoint["kind"];
-  dayOffset: number;
-  localTime: string;
-  payloadJson?: Record<string, unknown>;
-  isRequired?: boolean;
-  isEnabled?: boolean;
-  sortOrder?: number;
-}> {
-  return [
-    {
-      kind: "unlock_content",
-      dayOffset: 0,
-      localTime: "06:00",
-      payloadJson: {},
-      isRequired: false,
-      isEnabled: true,
-      sortOrder: 10,
-    },
-    {
-      kind: "kickoff_message",
-      dayOffset: 0,
-      localTime: "08:00",
-      payloadJson: {
-        template:
-          "Week {{week_number}} starts today. Focus: {{focus_outcome}}. Your lecture: {{lecture_title}}.",
-      },
-      isRequired: true,
-      isEnabled: true,
-      sortOrder: 20,
-    },
-    {
-      kind: "assign_quiz",
-      dayOffset: 2,
-      localTime: "12:00",
-      payloadJson: { due_day_offset: 4, due_local_time: "20:00" },
-      isRequired: true,
-      isEnabled: true,
-      sortOrder: 30,
-    },
-    {
-      kind: "nudge_message",
-      dayOffset: 3,
-      localTime: "12:30",
-      payloadJson: {
-        template:
-          "Mid-week reminder for {{theme_title}}. Quiz due {{quiz_due_local}}.",
-      },
-      isRequired: false,
-      isEnabled: true,
-      sortOrder: 40,
-    },
-    {
-      kind: "assign_action_tasks",
-      dayOffset: 4,
-      localTime: "09:00",
-      payloadJson: { due_day_offset: 6, due_local_time: "20:00" },
-      isRequired: true,
-      isEnabled: true,
-      sortOrder: 50,
-    },
-    {
-      kind: "assign_reflection",
-      dayOffset: 5,
-      localTime: "09:00",
-      payloadJson: { due_day_offset: 6, due_local_time: "20:00" },
-      isRequired: true,
-      isEnabled: true,
-      sortOrder: 60,
-    },
-    {
-      kind: "recap_message",
-      dayOffset: 6,
-      localTime: "18:00",
-      payloadJson: {
-        template: "Week {{week_number}} recap for {{theme_title}}.",
-      },
-      isRequired: false,
-      isEnabled: true,
-      sortOrder: 70,
-    },
-  ];
-}
-
-type NoticeState = { type: "success" | "error" | "info"; text: string } | null;
-
-type CourseFolderOption = {
-  id: number;
-  path: string;
-};
-
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message.trim()) return error.message.trim();
-  if (typeof error === "string" && error.trim()) return error.trim();
-  if (error && typeof error === "object") {
-    const maybe = error as {
-      message?: unknown;
-      details?: unknown;
-      hint?: unknown;
-      code?: unknown;
-    };
-    const message = typeof maybe.message === "string" ? maybe.message.trim() : "";
-    const details = typeof maybe.details === "string" ? maybe.details.trim() : "";
-    const hint = typeof maybe.hint === "string" ? maybe.hint.trim() : "";
-    const code = typeof maybe.code === "string" ? maybe.code.trim() : "";
-    const pieces = [
-      message,
-      details && details !== message ? details : "",
-      hint ? `Hint: ${hint}` : "",
-      code ? `[${code}]` : "",
-    ].filter(Boolean);
-    if (pieces.length > 0) return pieces.join(" ");
-  }
-  return fallback;
-}
-
-function isMissingCurriculumSchemaError(error: unknown): boolean {
-  const raw = String(
-    (error && typeof error === "object")
-      ? JSON.stringify(error)
-      : error ?? ""
-  ).toLowerCase();
-  return [
-    "upsert_course_curriculum_program",
-    "fetch_course_curriculum",
-    "curriculum_assert_root_course_folder",
-    "curriculum_folder_within_course",
-    "could not find the function",
-    "does not exist",
-    "\"code\":\"pgrst202\"",
-    "\"code\":\"42883\"",
-  ].some((needle) => raw.includes(needle));
-}
-
-function getCourseAutomationErrorMessage(error: unknown, fallback: string): string {
-  if (isMissingCurriculumSchemaError(error)) {
-    return "Course automation DB functions are missing in this environment. Apply Supabase migration 00044, then reload this page.";
-  }
-  return getErrorMessage(error, fallback);
-}
-
-function inferProgramMode(summary: CourseAutomationSummary): CourseAutomationProgramMode {
-  const program = summary.program;
-  if (!program) return "evergreen";
-  if (!program.isActive || program.programMode === "off") return "off";
-  if (program.programMode === "cohort_date") return "cohort_date";
-  return "evergreen";
-}
-
-function ensureWeekRows(
-  input: CourseWeekPlanRow[],
-  durationWeeks: number
-): CourseWeekPlanRow[] {
-  const safeDuration = Math.max(1, Math.min(104, durationWeeks || 16));
-  const byWeek = new Map<number, CourseWeekPlanRow>();
-  for (const row of input) byWeek.set(row.weekNumber, row);
-  const out: CourseWeekPlanRow[] = [];
-  for (let week = 1; week <= safeDuration; week += 1) {
-    out.push(
-      byWeek.get(week) ?? {
-        id: 0,
-        programId: 0,
-        weekNumber: week,
-        themeTitle: `Week ${week} Focus`,
-        focusOutcome: null,
-        lectureFolderId: null,
-        summaryPrompt: null,
-        touchpoints: [],
-      }
-    );
-  }
-  return out;
 }
 
 // ─── Create / Edit Folder Modal ───
@@ -663,29 +477,33 @@ function ItemModal({
   );
 }
 
-// ─── Course Access Modal ───
+// ─── Folder Access Modal ───
 
-function CourseAccessModal({
+function FolderAccessModal({
   folderId,
   folderName,
+  section,
   clients,
   onClose,
 }: {
   folderId: number;
   folderName: string;
+  section: VaultSection;
   clients: Client[];
   onClose: () => void;
 }) {
   const [enrolledIds, setEnrolledIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const isCourse = section === "courses";
 
   useEffect(() => {
-    fetchCourseAccess(folderId)
+    const fetchAccess = isCourse ? fetchCourseAccess : fetchResourceAccess;
+    fetchAccess(folderId)
       .then((ids) => setEnrolledIds(new Set(ids)))
-      .catch((err) => console.error("[Vault] fetchCourseAccess:", err))
+      .catch((err) => console.error("[Vault] fetch access:", err))
       .finally(() => setLoading(false));
-  }, [folderId]);
+  }, [folderId, isCourse]);
 
   async function toggle(clientId: string) {
     const isEnrolled = enrolledIds.has(clientId);
@@ -697,8 +515,17 @@ function CourseAccessModal({
       return next;
     });
     try {
-      if (isEnrolled) await revokeCourseAccess(folderId, clientId);
-      else await grantCourseAccess(folderId, clientId);
+      if (isEnrolled) {
+        if (isCourse) {
+          await revokeCourseAccess(folderId, clientId);
+        } else {
+          await revokeResourceAccess(folderId, clientId);
+        }
+      } else if (isCourse) {
+        await grantCourseAccess(folderId, clientId);
+      } else {
+        await grantResourceAccess(folderId, clientId);
+      }
     } catch (err) {
       console.error("[Vault] toggle access:", err);
       // Revert
@@ -723,8 +550,8 @@ function CourseAccessModal({
       >
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-bold">Manage Access</h3>
-            <p className="text-xs text-muted">{folderName} — {enrolledIds.size} enrolled</p>
+            <h3 className="text-lg font-bold">Manage {isCourse ? "Course" : "Resource"} Access</h3>
+            <p className="text-xs text-muted">{folderName} — {enrolledIds.size} assigned</p>
           </div>
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-black/5">
             <X size={18} />
@@ -790,609 +617,24 @@ function CourseAccessModal({
   );
 }
 
-function CourseAutomationDrawer({
-  course,
-  clients,
-  onClose,
-  onChanged,
-}: {
-  course: VaultFolder;
-  clients: Client[];
-  onClose: () => void;
-  onChanged: () => Promise<void>;
-}) {
-  const today = new Date().toISOString().slice(0, 10);
-  const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const [loading, setLoading] = useState(true);
-  const [notice, setNotice] = useState<NoticeState>(null);
-  const [summary, setSummary] = useState<CourseAutomationSummary>({
-    program: null,
-    weeks: [],
-    enrollments: [],
-  });
-  const [programName, setProgramName] = useState("");
-  const [programMode, setProgramMode] = useState<CourseAutomationProgramMode>("evergreen");
-  const [durationWeeks, setDurationWeeks] = useState(16);
-  const [cohortStartDate, setCohortStartDate] = useState(today);
-  const [weekRows, setWeekRows] = useState<CourseWeekPlanRow[]>([]);
-  const [selectedWeekNumber, setSelectedWeekNumber] = useState(1);
-  const [folderOptions, setFolderOptions] = useState<CourseFolderOption[]>([]);
-  const [folderSearch, setFolderSearch] = useState("");
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [enrollClientId, setEnrollClientId] = useState("");
-  const [enrollTimezone, setEnrollTimezone] = useState(browserTimezone);
-  const [enrollStartDate, setEnrollStartDate] = useState(today);
-  const [isSavingProgram, setIsSavingProgram] = useState(false);
-  const [isSavingWeeks, setIsSavingWeeks] = useState(false);
-  const [isResettingTouchpoints, setIsResettingTouchpoints] = useState(false);
-  const [isEnrolling, setIsEnrolling] = useState(false);
-  const [isUpdatingEnrollmentId, setIsUpdatingEnrollmentId] = useState<number | null>(null);
-
-  const filteredFolderOptions = folderSearch
-    ? folderOptions.filter((entry) => entry.path.toLowerCase().includes(folderSearch.toLowerCase()))
-    : folderOptions;
-
-  const selectedWeek = weekRows.find((row) => row.weekNumber === selectedWeekNumber) ?? null;
-
-  const loadCourseFolderOptions = useCallback(async (): Promise<CourseFolderOption[]> => {
-    const rootId = Number(course.id);
-    const rootPath = course.name;
-    const out: CourseFolderOption[] = [{ id: rootId, path: rootPath }];
-    const visited = new Set<number>([rootId]);
-
-    async function walk(parentId: number, parentPath: string) {
-      const children = await fetchVaultFolders("courses", parentId);
-      const mapped = children.map((row) => fromDbFolder(row as Record<string, unknown>));
-      for (const child of mapped) {
-        const childId = Number(child.id);
-        if (!Number.isFinite(childId) || childId <= 0 || visited.has(childId)) continue;
-        visited.add(childId);
-        const path = `${parentPath} / ${child.name}`;
-        out.push({ id: childId, path });
-        await walk(childId, path);
-      }
-    }
-
-    await walk(rootId, rootPath);
-    return out;
-  }, [course.id, course.name]);
-
-  const reload = useCallback(async () => {
-    const [nextSummary, nextOptions] = await Promise.all([
-      fetchCourseCurriculum(Number(course.id)),
-      loadCourseFolderOptions(),
-    ]);
-    const inferredMode = inferProgramMode(nextSummary);
-    const nextDuration = nextSummary.program?.durationWeeks ?? 16;
-    const nextWeeks = ensureWeekRows(nextSummary.weeks, nextDuration);
-
-    setSummary(nextSummary);
-    setProgramName(nextSummary.program?.name ?? `${course.name} Automation`);
-    setProgramMode(inferredMode);
-    setDurationWeeks(nextDuration);
-    setCohortStartDate(nextSummary.program?.cohortStartDate ?? today);
-    setWeekRows(nextWeeks);
-    setSelectedWeekNumber(nextWeeks[0]?.weekNumber ?? 1);
-    setFolderOptions(nextOptions);
-    setEnrollStartDate(nextSummary.program?.cohortStartDate ?? today);
-  }, [course.id, course.name, loadCourseFolderOptions, today]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setNotice(null);
-    reload()
-      .catch((error) => {
-        if (cancelled) return;
-        setNotice({ type: "error", text: getCourseAutomationErrorMessage(error, "Could not load course automation.") });
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reload]);
-
-  function updateWeekRow(weekNumber: number, patch: Partial<CourseWeekPlanRow>) {
-    setWeekRows((prev) => prev.map((row) => (
-      row.weekNumber === weekNumber ? { ...row, ...patch } : row
-    )));
-  }
-
-  async function handleSaveProgram() {
-    setNotice(null);
-    if (programMode === "cohort_date" && !cohortStartDate) {
-      setNotice({ type: "error", text: "Choose a cohort start date for cohort mode." });
-      return;
-    }
-    setIsSavingProgram(true);
-    try {
-      const saved = await upsertCourseCurriculumProgram({
-        courseFolderId: Number(course.id),
-        name: programName.trim() || `${course.name} Automation`,
-        durationWeeks: Math.max(1, Math.min(104, durationWeeks || 16)),
-        isActive: programMode !== "off",
-        seedDefaults: true,
-        programMode,
-        cohortStartDate: programMode === "cohort_date" ? cohortStartDate : null,
-      });
-      await reload();
-      setNotice({
-        type: "success",
-        text: saved ? "Program settings saved." : "Program save returned no data.",
-      });
-    } catch (error) {
-      setNotice({ type: "error", text: getCourseAutomationErrorMessage(error, "Could not save program settings.") });
-    } finally {
-      setIsSavingProgram(false);
-    }
-  }
-
-  async function handleSaveWeekMap() {
-    setNotice(null);
-    if (!summary.program?.id) {
-      setNotice({ type: "info", text: "Save Program first." });
-      return;
-    }
-    setIsSavingWeeks(true);
-    try {
-      for (const week of weekRows) {
-        await upsertCurriculumWeek({
-          // Use (program_id, week_number) upsert path so "Not linked" can clear lectureFolderId.
-          id: null,
-          programId: summary.program.id,
-          weekNumber: week.weekNumber,
-          themeTitle: week.themeTitle.trim() || `Week ${week.weekNumber} Focus`,
-          focusOutcome: week.focusOutcome?.trim() || null,
-          lectureFolderId: week.lectureFolderId,
-          summaryPrompt: week.summaryPrompt?.trim() || null,
-          seedTouchpoints: true,
-        });
-      }
-      await reload();
-      setNotice({ type: "success", text: "Week map saved." });
-    } catch (error) {
-      setNotice({ type: "error", text: getCourseAutomationErrorMessage(error, "Could not save week map.") });
-    } finally {
-      setIsSavingWeeks(false);
-    }
-  }
-
-  async function handleResetWeekTouchpoints() {
-    setNotice(null);
-    if (!selectedWeek || !selectedWeek.id) {
-      setNotice({ type: "info", text: "Save week map first to generate week rows." });
-      return;
-    }
-    setIsResettingTouchpoints(true);
-    try {
-      await upsertCurriculumTouchpoints(selectedWeek.id, buildDefaultCurriculumTouchpoints());
-      await reload();
-      setNotice({ type: "success", text: `Default touchpoints applied for week ${selectedWeek.weekNumber}.` });
-    } catch (error) {
-      setNotice({ type: "error", text: getCourseAutomationErrorMessage(error, "Could not reset week touchpoints.") });
-    } finally {
-      setIsResettingTouchpoints(false);
-    }
-  }
-
-  async function handleEnrollClient() {
-    setNotice(null);
-    if (!summary.program?.id) {
-      setNotice({ type: "info", text: "Save Program first." });
-      return;
-    }
-    if (!enrollClientId) {
-      setNotice({ type: "info", text: "Select a client first." });
-      return;
-    }
-    const effectiveStartDate = programMode === "cohort_date"
-      ? (cohortStartDate || today)
-      : enrollStartDate;
-    if (!effectiveStartDate) {
-      setNotice({ type: "error", text: "Choose a start date before enrolling." });
-      return;
-    }
-    setIsEnrolling(true);
-    try {
-      await grantCourseAccess(Number(course.id), enrollClientId);
-      await enrollClientInCurriculum({
-        clientId: enrollClientId,
-        programId: summary.program.id,
-        startDate: effectiveStartDate,
-        timezone: enrollTimezone || null,
-      });
-      await reload();
-      await onChanged();
-      setNotice({ type: "success", text: "Client enrolled in course automation." });
-    } catch (error) {
-      setNotice({ type: "error", text: getCourseAutomationErrorMessage(error, "Could not enroll client.") });
-    } finally {
-      setIsEnrolling(false);
-    }
-  }
-
-  async function handlePauseResume(entry: CourseAutomationEnrollmentRow) {
-    setNotice(null);
-    setIsUpdatingEnrollmentId(entry.enrollmentId);
-    try {
-      if (entry.enrollmentStatus === "active") {
-        await pauseCurriculumEnrollment(entry.enrollmentId);
-      } else if (entry.enrollmentStatus === "paused") {
-        await resumeCurriculumEnrollment(entry.enrollmentId);
-      }
-      await reload();
-      setNotice({
-        type: "success",
-        text: `${entry.clientName} ${entry.enrollmentStatus === "active" ? "paused" : "resumed"}.`,
-      });
-    } catch (error) {
-      setNotice({ type: "error", text: getCourseAutomationErrorMessage(error, "Could not update enrollment.") });
-    } finally {
-      setIsUpdatingEnrollmentId(null);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/35 backdrop-blur-[1px]" onClick={onClose}>
-      <aside
-        onClick={(event) => event.stopPropagation()}
-        className="h-full w-full max-w-4xl bg-white shadow-2xl flex flex-col"
-      >
-        <div className="px-6 py-4 border-b border-black/10 flex items-start justify-between gap-4">
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-muted font-semibold">Course Automation Builder</p>
-            <h3 className="text-lg font-bold text-foreground mt-0.5">{course.name}</h3>
-            <p className="text-xs text-muted mt-1">Build your 16-week experience directly inside this course.</p>
-          </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-black/5 flex items-center justify-center">
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-          {notice && (
-            <div
-              className={`rounded-lg border px-3 py-2 text-xs ${
-                notice.type === "error"
-                  ? "border-red-200 bg-red-50 text-red-700"
-                  : notice.type === "success"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                    : "border-blue-200 bg-blue-50 text-blue-700"
-              }`}
-            >
-              {notice.text}
-            </div>
-          )}
-
-          {loading ? (
-            <div className="glass-card p-6 text-sm text-muted">Loading course automation…</div>
-          ) : (
-            <>
-              <div className="glass-card p-5 space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-semibold text-foreground">Step 1 · Program Setup</h4>
-                    <p className="text-xs text-muted">Choose mode, duration, and cadence baseline for this course.</p>
-                  </div>
-                  <button
-                    onClick={handleSaveProgram}
-                    disabled={isSavingProgram}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-accent/30 text-accent text-xs font-medium hover:bg-accent/5 disabled:opacity-50"
-                  >
-                    {isSavingProgram ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
-                    Save Program
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                  <label className="block text-xs text-muted md:col-span-2">
-                    Program name
-                    <input
-                      value={programName}
-                      onChange={(event) => setProgramName(event.target.value)}
-                      className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
-                    />
-                  </label>
-                  <label className="block text-xs text-muted">
-                    Mode
-                    <select
-                      value={programMode}
-                      onChange={(event) => setProgramMode(event.target.value as CourseAutomationProgramMode)}
-                      className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
-                    >
-                      <option value="off">Off</option>
-                      <option value="evergreen">Evergreen</option>
-                      <option value="cohort_date">Cohort date</option>
-                    </select>
-                  </label>
-                  <label className="block text-xs text-muted">
-                    Duration (weeks)
-                    <input
-                      type="number"
-                      min={1}
-                      max={104}
-                      value={durationWeeks}
-                      onChange={(event) => setDurationWeeks(Math.max(1, Math.min(104, Number(event.target.value || 16))))}
-                      className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
-                    />
-                  </label>
-                </div>
-
-                {programMode === "cohort_date" && (
-                  <label className="block text-xs text-muted max-w-xs">
-                    Cohort start date
-                    <input
-                      type="date"
-                      value={cohortStartDate}
-                      onChange={(event) => setCohortStartDate(event.target.value)}
-                      className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
-                    />
-                  </label>
-                )}
-              </div>
-
-              <div className="glass-card p-5 space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-semibold text-foreground">Step 2 · Week Journey Map</h4>
-                    <p className="text-xs text-muted">Map themes and link each week to a module/lesson path in this course tree.</p>
-                  </div>
-                  <button
-                    onClick={handleSaveWeekMap}
-                    disabled={isSavingWeeks}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-accent/30 text-accent text-xs font-medium hover:bg-accent/5 disabled:opacity-50"
-                  >
-                    {isSavingWeeks ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
-                    Save Week Map
-                  </button>
-                </div>
-
-                <label className="block text-xs text-muted max-w-sm">
-                  Search course path
-                  <input
-                    value={folderSearch}
-                    onChange={(event) => setFolderSearch(event.target.value)}
-                    placeholder="e.g. Course / Module 2 / Lesson 1"
-                    className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
-                  />
-                </label>
-
-                <div className="max-h-[320px] overflow-y-auto rounded-lg border border-black/10">
-                  <table className="w-full text-xs">
-                    <thead className="bg-black/[0.03] sticky top-0">
-                      <tr className="text-left">
-                        <th className="px-3 py-2 font-semibold">Week</th>
-                        <th className="px-3 py-2 font-semibold">Theme</th>
-                        <th className="px-3 py-2 font-semibold">Focus Outcome</th>
-                        <th className="px-3 py-2 font-semibold">Linked Path</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {weekRows.map((row) => (
-                        <tr key={row.weekNumber} className="border-t border-black/5">
-                          <td className="px-3 py-2 align-top font-semibold text-foreground">W{row.weekNumber}</td>
-                          <td className="px-3 py-2 align-top">
-                            <input
-                              value={row.themeTitle}
-                              onChange={(event) => updateWeekRow(row.weekNumber, { themeTitle: event.target.value })}
-                              className="w-full px-2.5 py-1.5 rounded-md bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
-                            />
-                          </td>
-                          <td className="px-3 py-2 align-top">
-                            <input
-                              value={row.focusOutcome ?? ""}
-                              onChange={(event) => updateWeekRow(row.weekNumber, { focusOutcome: event.target.value })}
-                              className="w-full px-2.5 py-1.5 rounded-md bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
-                            />
-                          </td>
-                          <td className="px-3 py-2 align-top">
-                            <select
-                              value={row.lectureFolderId ?? ""}
-                              onChange={(event) => {
-                                const next = Number(event.target.value);
-                                updateWeekRow(row.weekNumber, {
-                                  lectureFolderId: Number.isFinite(next) && next > 0 ? next : null,
-                                });
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-md bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
-                            >
-                              <option value="">Not linked</option>
-                              {filteredFolderOptions.map((folder) => (
-                                <option key={folder.id} value={folder.id}>
-                                  {folder.path}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div className="glass-card p-5 space-y-4">
-                <div className="flex items-center gap-2">
-                  <Sparkles size={16} className="text-accent" />
-                  <h4 className="text-sm font-semibold text-foreground">Step 3 · Enroll Clients</h4>
-                </div>
-                <p className="text-xs text-muted">Enrollment syncs course access and automation start together.</p>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <label className="block text-xs text-muted md:col-span-1">
-                    Client
-                    <select
-                      value={enrollClientId}
-                      onChange={(event) => setEnrollClientId(event.target.value)}
-                      className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
-                    >
-                      <option value="">Select client</option>
-                      {clients.map((client) => (
-                        <option key={client.id} value={client.id}>{client.full_name}</option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="block text-xs text-muted">
-                    Start date
-                    <input
-                      type="date"
-                      value={programMode === "cohort_date" ? (cohortStartDate || today) : enrollStartDate}
-                      disabled={programMode === "cohort_date"}
-                      onChange={(event) => setEnrollStartDate(event.target.value)}
-                      className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 disabled:opacity-60 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
-                    />
-                  </label>
-
-                  <label className="block text-xs text-muted">
-                    Timezone
-                    <input
-                      value={enrollTimezone}
-                      onChange={(event) => setEnrollTimezone(event.target.value)}
-                      className="mt-1.5 w-full px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
-                    />
-                  </label>
-                </div>
-
-                <button
-                  onClick={handleEnrollClient}
-                  disabled={isEnrolling || !enrollClientId || !summary.program}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-br from-accent to-accent-light text-white text-sm font-medium disabled:opacity-50"
-                >
-                  {isEnrolling ? <RefreshCw size={14} className="animate-spin" /> : <Users size={14} />}
-                  Enroll Client
-                </button>
-
-                <div className="space-y-2">
-                  <h5 className="text-xs font-semibold text-muted uppercase tracking-wide">Active Enrollments</h5>
-                  {summary.enrollments.length === 0 ? (
-                    <p className="text-xs text-muted">No active enrollments yet.</p>
-                  ) : (
-                    summary.enrollments.map((entry) => (
-                      <div key={entry.enrollmentId} className="px-3 py-2 rounded-lg border border-black/10 bg-black/[0.02] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-foreground">{entry.clientName} · Week {entry.currentWeek}</p>
-                          <p className="text-xs text-muted">{entry.outcomeStatus.replaceAll("_", " ")} · Score {entry.competencyScore ?? 0}</p>
-                        </div>
-                        {(entry.enrollmentStatus === "active" || entry.enrollmentStatus === "paused") && (
-                          <button
-                            onClick={() => handlePauseResume(entry)}
-                            disabled={isUpdatingEnrollmentId === entry.enrollmentId}
-                            className="px-3 py-1.5 rounded-lg border border-black/10 text-xs font-medium text-muted hover:text-foreground hover:bg-black/5 disabled:opacity-50"
-                          >
-                            {isUpdatingEnrollmentId === entry.enrollmentId
-                              ? "Updating..."
-                              : entry.enrollmentStatus === "active"
-                                ? "Pause"
-                                : "Resume"}
-                          </button>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              <div className="glass-card p-5 space-y-3">
-                <button
-                  onClick={() => setShowAdvanced((prev) => !prev)}
-                  className="w-full flex items-center justify-between text-left"
-                >
-                  <span className="text-sm font-semibold text-foreground">Advanced Controls</span>
-                  <ChevronDown size={16} className={`text-muted transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
-                </button>
-                {showAdvanced && (
-                  <div className="space-y-4">
-                    <div className="flex items-end gap-3">
-                      <label className="block text-xs text-muted">
-                        Week
-                        <select
-                          value={selectedWeekNumber}
-                          onChange={(event) => setSelectedWeekNumber(Math.max(1, Number(event.target.value || 1)))}
-                          className="mt-1.5 px-3 py-2 text-sm rounded-lg bg-black/5 border border-black/10 focus:border-accent/50 focus:ring-1 focus:ring-accent/25 outline-none"
-                        >
-                          {weekRows.map((row) => (
-                            <option key={row.weekNumber} value={row.weekNumber}>Week {row.weekNumber}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <button
-                        onClick={handleResetWeekTouchpoints}
-                        disabled={isResettingTouchpoints}
-                        className="px-3 py-2 rounded-lg border border-black/10 text-xs font-medium text-muted hover:text-foreground hover:bg-black/5 disabled:opacity-50"
-                      >
-                        {isResettingTouchpoints ? "Resetting..." : "Reset Touchpoints"}
-                      </button>
-                    </div>
-
-                    <div className="space-y-2">
-                      <p className="text-xs font-semibold text-muted uppercase tracking-wide">Touchpoints</p>
-                      {selectedWeek?.touchpoints?.length ? (
-                        selectedWeek.touchpoints.map((touchpoint) => (
-                          <div key={touchpoint.id} className="px-3 py-2 rounded-lg border border-black/10 bg-black/[0.02] flex items-center justify-between gap-2">
-                            <div>
-                              <p className="text-sm font-medium text-foreground">{touchpoint.kind.replaceAll("_", " ")}</p>
-                              <p className="text-xs text-muted">Day {touchpoint.dayOffset} at {touchpoint.localTime.slice(0, 5)}</p>
-                            </div>
-                            <span className={`text-[10px] px-2 py-1 rounded-full ${touchpoint.isEnabled ? "bg-emerald-100 text-emerald-700" : "bg-zinc-200 text-zinc-600"}`}>
-                              {touchpoint.isEnabled ? "Enabled" : "Disabled"}
-                            </span>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="text-xs text-muted">No touchpoints loaded for this week.</p>
-                      )}
-                    </div>
-
-                    <div className="rounded-lg border border-black/10 bg-black/[0.02] px-3 py-2">
-                      <p className="text-xs font-semibold text-muted uppercase tracking-wide flex items-center gap-1">
-                        <ListChecks size={12} />
-                        Template Variables
-                      </p>
-                      <p className="text-xs text-muted mt-1">
-                        {`{{client_first_name}}, {{week_number}}, {{theme_title}}, {{focus_outcome}}, {{lecture_title}}, {{quiz_due_local}}, {{task_summary}}, {{last_week_score}}`}
-                      </p>
-                    </div>
-
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2 text-xs flex items-start gap-2">
-                      <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                      <span>Risk alert thresholds currently follow the v1 engine defaults (70). Touchpoint and content mapping changes apply immediately.</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      </aside>
-    </div>
-  );
-}
-
 // ─── Folder Card ───
 
 function FolderCard({
   folder,
-  enrolledCount,
-  isCourse,
+  assignedCount,
   onClick,
   onEdit,
   onDelete,
   onManageAccess,
-  onAutomation,
 }: {
   folder: VaultFolder;
-  enrolledCount?: number;
-  isCourse: boolean;
+  assignedCount?: number;
   onClick: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onManageAccess?: () => void;
-  onAutomation?: () => void;
 }) {
-  const isRootCourse = isCourse && folder.parentId === null;
+  const isRootFolder = folder.parentId === null;
   const label =
     folder.section === "courses"
       ? folder.parentId === null
@@ -1425,9 +667,9 @@ function FolderCard({
           </button>
         </div>
         {/* Enrolled badge */}
-        {isRootCourse && enrolledCount !== undefined && (
+        {isRootFolder && assignedCount !== undefined && (
           <div className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-1 rounded-full bg-white/90 shadow text-[10px] font-medium text-muted">
-            <Users size={10} /> {enrolledCount}
+            <Users size={10} /> {assignedCount}
           </div>
         )}
       </div>
@@ -1439,25 +681,15 @@ function FolderCard({
           <p className="text-xs text-muted mt-1 line-clamp-2">{folder.description}</p>
         )}
       </div>
-      {/* Manage access button for root courses */}
-      {isRootCourse && (onManageAccess || onAutomation) && (
-        <div className="px-3 pb-3 space-y-1.5">
-          {onAutomation && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onAutomation(); }}
-              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-accent/30 text-xs font-medium text-accent hover:bg-accent/5 transition-colors"
-            >
-              <Sparkles size={12} /> Automation
-            </button>
-          )}
-          {onManageAccess && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onManageAccess(); }}
-              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-black/10 text-xs font-medium text-muted hover:border-accent/40 hover:text-accent transition-colors"
-            >
-              <Users size={12} /> Manage Access
-            </button>
-          )}
+      {/* Manage access button for top-level folders */}
+      {isRootFolder && onManageAccess && (
+        <div className="px-3 pb-3">
+          <button
+            onClick={(e) => { e.stopPropagation(); onManageAccess(); }}
+            className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-black/10 text-xs font-medium text-muted hover:border-accent/40 hover:text-accent transition-colors"
+          >
+            <Users size={12} /> Manage Access
+          </button>
         </div>
       )}
     </div>
@@ -1727,7 +959,7 @@ export default function VaultPage() {
   const [insightSettings, setInsightSettings] = useState<CoachInsightSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [clients, setClients] = useState<Client[]>([]);
-  const [courseAccessCounts, setCourseAccessCounts] = useState<Record<string, number>>({});
+  const [folderAccessCounts, setFolderAccessCounts] = useState<Record<string, number>>({});
   const [savingCadence, setSavingCadence] = useState(false);
 
   // Modals
@@ -1737,8 +969,7 @@ export default function VaultPage() {
   const [editingItem, setEditingItem] = useState<VaultItem | null>(null);
   const [showInsightModal, setShowInsightModal] = useState(false);
   const [editingInsight, setEditingInsight] = useState<CoachInsight | null>(null);
-  const [courseAccessTarget, setCourseAccessTarget] = useState<{ id: number; name: string } | null>(null);
-  const [courseAutomationTarget, setCourseAutomationTarget] = useState<VaultFolder | null>(null);
+  const [folderAccessTarget, setFolderAccessTarget] = useState<{ id: number; name: string; section: VaultSection } | null>(null);
 
   const isInsightsTab = activeTab === "insights";
   const currentFolderId = folderPath.length > 0 ? folderPath[folderPath.length - 1].id : null;
@@ -1805,19 +1036,22 @@ export default function VaultPage() {
         setItems([]);
       }
 
-      // Load course access counts for root courses view
-      if (activeTab === "courses" && currentFolderId === null) {
+      // Load assignment counts for root folders in Resources/Courses.
+      if ((activeTab === "courses" || activeTab === "resources") && currentFolderId === null) {
+        const fetchAccess = activeTab === "courses" ? fetchCourseAccess : fetchResourceAccess;
         const rootFolders = fetchedFolders.map(fromDbFolder);
         const counts: Record<string, number> = {};
         await Promise.all(
           rootFolders.map(async (f) => {
             try {
-              const ids = await fetchCourseAccess(Number(f.id));
+              const ids = await fetchAccess(Number(f.id));
               counts[f.id] = ids.length;
             } catch { /* ignore */ }
           })
         );
-        setCourseAccessCounts(counts);
+        setFolderAccessCounts(counts);
+      } else {
+        setFolderAccessCounts({});
       }
     } catch (err) {
       console.error("[Vault] loadData:", err);
@@ -1988,8 +1222,7 @@ export default function VaultPage() {
                   setFolders([]);
                   setItems([]);
                   setInsights([]);
-                  setCourseAccessTarget(null);
-                  setCourseAutomationTarget(null);
+                  setFolderAccessTarget(null);
                 }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   activeTab === tab.value
@@ -2161,19 +1394,17 @@ export default function VaultPage() {
             <FolderCard
               key={folder.id}
               folder={folder}
-              isCourse={activeTab === "courses"}
-              enrolledCount={courseAccessCounts[folder.id]}
+              assignedCount={folderAccessCounts[folder.id]}
               onClick={() => navigateIntoFolder(folder)}
               onEdit={() => { setEditingFolder(folder); setShowFolderModal(true); }}
               onDelete={() => handleDeleteFolder(folder)}
               onManageAccess={
-                activeTab === "courses" && folder.parentId === null
-                  ? () => setCourseAccessTarget({ id: Number(folder.id), name: folder.name })
-                  : undefined
-              }
-              onAutomation={
-                activeTab === "courses" && folder.parentId === null
-                  ? () => setCourseAutomationTarget(folder)
+                folder.parentId === null
+                  ? () => setFolderAccessTarget({
+                      id: Number(folder.id),
+                      name: folder.name,
+                      section: folder.section,
+                    })
                   : undefined
               }
             />
@@ -2211,21 +1442,13 @@ export default function VaultPage() {
         />
       )}
 
-      {courseAccessTarget && (
-        <CourseAccessModal
-          folderId={courseAccessTarget.id}
-          folderName={courseAccessTarget.name}
+      {folderAccessTarget && (
+        <FolderAccessModal
+          folderId={folderAccessTarget.id}
+          folderName={folderAccessTarget.name}
+          section={folderAccessTarget.section}
           clients={clients}
-          onClose={() => setCourseAccessTarget(null)}
-        />
-      )}
-
-      {courseAutomationTarget && (
-        <CourseAutomationDrawer
-          course={courseAutomationTarget}
-          clients={clients}
-          onClose={() => setCourseAutomationTarget(null)}
-          onChanged={loadData}
+          onClose={() => setFolderAccessTarget(null)}
         />
       )}
 

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Bot,
   LayoutDashboard,
   Dumbbell,
   UtensilsCrossed,
@@ -15,6 +16,7 @@ const TABS: { key: ClientSubTab; label: string; icon: React.ComponentType<{ size
   { key: "nutrition", label: "Nutrition", icon: UtensilsCrossed },
   { key: "progress", label: "Progress", icon: TrendingUp },
   { key: "roadmap", label: "Roadmap", icon: CalendarDays },
+  { key: "automations", label: "Automations", icon: Bot },
 ];
 
 export function SubTabBar({

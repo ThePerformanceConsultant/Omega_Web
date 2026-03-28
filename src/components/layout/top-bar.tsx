@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Bell,
+  Bot,
   Check,
   CheckCheck,
   CalendarDays,
@@ -69,6 +70,7 @@ const CLIENT_TABS: Array<{
   { key: "nutrition", label: "Nutrition", icon: UtensilsCrossed },
   { key: "progress", label: "Progress", icon: TrendingUp },
   { key: "roadmap", label: "Roadmap", icon: CalendarDays },
+  { key: "automations", label: "Automations", icon: Bot },
 ];
 
 function timeAgo(iso: string): string {

@@ -16,6 +16,7 @@ import { WorkoutsTab } from "./tabs/workouts-tab";
 import { NutritionTab } from "./tabs/nutrition-tab";
 import { ProgressTab } from "./tabs/progress-tab";
 import { RoadmapTab } from "./tabs/roadmap";
+import { AutomationsTab } from "./tabs/automations-tab";
 
 const PANEL_TITLES: Record<string, string> = {
   chat: "Chat",
@@ -71,6 +72,9 @@ export function ClientProfile({
           )}
           {activeSubTab === "roadmap" && (
             <RoadmapTab clientId={client.id} />
+          )}
+          {activeSubTab === "automations" && (
+            <AutomationsTab clientId={client.id} />
           )}
         </div>
 
