@@ -38,9 +38,13 @@ function TaskItem({ task }: { task: { id: string; title: string; completed: bool
       <span className={`flex-1 text-sm ${task.completed ? "line-through text-muted" : overdue ? "text-danger" : ""}`}>
         {task.title}
       </span>
-      {task.dueDate && !task.completed && (
+      {task.dueDate && (
         <span className={`text-[10px] px-2 py-0.5 rounded-full shrink-0 ${
-          overdue ? "text-danger bg-danger/10" : "text-muted bg-black/5"
+          task.completed
+            ? "text-muted bg-black/[0.04]"
+            : overdue
+            ? "text-danger bg-danger/10"
+            : "text-muted bg-black/5"
         }`}>
           {task.isWeeklyFocus ? "Wk " : ""}
           {new Date(task.dueDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}

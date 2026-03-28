@@ -47,8 +47,16 @@ function LineChart({
 }) {
   const gradientId = useId().replace(/:/g, "");
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const safeData = useMemo(
+    () =>
+      data.map((point) => ({
+        date: point.date,
+        value: Number.isFinite(point.value) ? point.value : 0,
+      })),
+    [data],
+  );
 
-  if (data.length === 0) {
+  if (safeData.length === 0) {
     return (
       <div
         className="flex items-center justify-center text-xs text-muted"
@@ -65,7 +73,7 @@ function LineChart({
   const chartH = height - padding.top - padding.bottom;
   const baselineY = padding.top + chartH;
 
-  const values = data.map((d) => d.value);
+  const values = safeData.map((d) => d.value);
   const domainValues =
     targetValue !== null && Number.isFinite(targetValue)
       ? [...values, targetValue]
@@ -76,8 +84,8 @@ function LineChart({
 
   const toY = (value: number) => padding.top + chartH - ((value - minV) / range) * chartH;
 
-  const points = data.map((d, i) => {
-    const x = data.length === 1 ? padding.left + chartW / 2 : padding.left + (i / (data.length - 1)) * chartW;
+  const points = safeData.map((d, i) => {
+    const x = safeData.length === 1 ? padding.left + chartW / 2 : padding.left + (i / (safeData.length - 1)) * chartW;
     const y = toY(d.value);
     return { x, y, date: d.date, value: d.value };
   });
@@ -104,9 +112,9 @@ function LineChart({
   }));
 
   // X-axis labels (first, middle, last for longer series)
-  const xIdxs = data.length <= 2
-    ? data.map((_, index) => index)
-    : [...new Set([0, Math.floor(data.length / 2), data.length - 1])];
+  const xIdxs = safeData.length <= 2
+    ? safeData.map((_, index) => index)
+    : [...new Set([0, Math.floor(safeData.length / 2), safeData.length - 1])];
   const hoveredPoint =
     hoveredIndex !== null && points[hoveredIndex] ? points[hoveredIndex] : null;
   const targetY =
@@ -190,12 +198,12 @@ function LineChart({
       {xIdxs.map((idx) => {
         const p = points[idx];
         if (!p) return null;
-        const raw = data[idx].date;
+        const raw = safeData[idx].date;
         const d = new Date(raw);
         const label = Number.isNaN(d.getTime()) ? raw : `${d.getDate()}/${d.getMonth() + 1}`;
         return (
           <text
-            key={`${idx}-${data[idx].date}`}
+            key={`${idx}-${safeData[idx].date}`}
             x={p.x}
             y={height - 5}
             textAnchor="middle"
@@ -971,7 +979,24 @@ function buildExerciseProgress(allLogs: WorkoutLogEntry[]): Map<string, Exercise
 
   for (const log of allLogs) {
     for (const exerciseLog of log.exerciseLogs) {
-      const completedSetLogs = exerciseLog.setLogs.filter((setLog) => setLog.completed);
+      const rawSetLogs = Array.isArray(exerciseLog.setLogs) ? exerciseLog.setLogs : [];
+      const completedSetLogs = rawSetLogs
+        .filter((setLog) => Boolean(setLog?.completed))
+        .map((setLog, index) => {
+          const setNumber = Number.isFinite(Number(setLog?.setNumber)) ? Number(setLog?.setNumber) : index + 1;
+          const weight = Number.isFinite(Number(setLog?.weight)) ? Number(setLog?.weight) : 0;
+          const reps = Number.isFinite(Number(setLog?.reps)) ? Number(setLog?.reps) : 0;
+          const hasRpe = setLog?.rpe !== null && setLog?.rpe !== undefined;
+          const rpeRaw = hasRpe ? Number(setLog?.rpe) : NaN;
+          const rpe = Number.isFinite(rpeRaw) ? rpeRaw : null;
+          return {
+            setNumber,
+            weight,
+            reps,
+            rpe,
+            completed: true,
+          } as SetLogEntry;
+        });
       if (completedSetLogs.length === 0) continue;
 
       let bestWeight = 0;

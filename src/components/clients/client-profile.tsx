@@ -75,7 +75,7 @@ export function ClientProfile({
         </div>
 
         {activePanel && (
-          <div className="absolute right-0 top-0 bottom-0 w-[min(38vw,560px)] animate-panel-in-right">
+          <div className="absolute right-0 top-1.5 bottom-1.5 w-[min(38vw,560px)] animate-panel-in-right rounded-l-2xl overflow-hidden border border-black/10 bg-white/98 shadow-[-10px_0_28px_rgba(0,0,0,0.06)]">
             <SidePanel
               title={PANEL_TITLES[activePanel]}
               onClose={() => clientViewStore.setActivePanel(null)}

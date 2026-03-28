@@ -93,9 +93,10 @@ export function Sidebar() {
       {/* Toggle Button */}
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="absolute -right-3 top-7 z-20 w-6 h-6 rounded-full bg-[#1e1e1e] border border-white/15 flex items-center justify-center text-white/60 hover:text-white hover:bg-accent/30 transition-colors"
+        className="absolute -right-4 top-16 z-30 w-8 h-8 rounded-full bg-accent border-2 border-white/80 flex items-center justify-center text-white shadow-[0_8px_20px_rgba(184,134,11,0.45)] hover:scale-105 hover:bg-accent-light transition-all"
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
       >
-        {collapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
+        {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
       </button>
 
       {/* Logo */}

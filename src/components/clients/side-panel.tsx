@@ -10,9 +10,9 @@ interface SidePanelProps {
 
 export function SidePanel({ title, onClose, children }: SidePanelProps) {
   return (
-    <div className="h-full min-w-0 border-l border-black/10 bg-white/98 backdrop-blur-[2px] flex flex-col self-stretch shadow-[-8px_0_24px_rgba(0,0,0,0.05)]">
+    <div className="h-full min-w-0 bg-transparent flex flex-col self-stretch">
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3 border-b border-black/10 shrink-0 sticky top-0 bg-white z-10">
+      <div className="flex items-center justify-between px-5 py-3.5 border-b border-black/10 shrink-0 sticky top-0 bg-white z-10">
         <h2 className="text-base font-semibold">{title}</h2>
         <button
           onClick={onClose}
