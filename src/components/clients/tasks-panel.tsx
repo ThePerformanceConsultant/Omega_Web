@@ -127,93 +127,95 @@ export function TasksPanel({ clientId }: { clientId: string }) {
   const otherClientTasks = tasks.filter((t) => t.owner === "client" && !t.isWeeklyFocus);
 
   return (
-    <div className="space-y-6">
-      {/* Coach Tasks */}
-      <section>
-        <h3 className="text-sm font-semibold mb-2">Coach Tasks</h3>
-        <div className="space-y-0">
-          {coachTasks.map((task) => (
-            <TaskItem key={task.id} task={task} />
-          ))}
-          {coachTasks.length === 0 && (
-            <p className="text-xs text-muted py-2">No coach tasks</p>
-          )}
-        </div>
-        <InlineAddTask
-          onAdd={(title, dueDate) =>
-            clientStore.addTask({
-              clientId,
-              title,
-              completed: false,
-              dueDate,
-              owner: "coach",
-              isWeeklyFocus: false,
-            })
-          }
-        />
-      </section>
-
-      <hr className="border-black/5" />
-
-      {/* Client Tasks */}
-      <section>
-        <h3 className="text-sm font-semibold mb-3">Client Tasks</h3>
-
-        {/* Weekly Focus */}
-        <div className="mb-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Target size={14} className="text-accent" />
-            <span className="text-xs font-medium text-accent">Weekly Focus</span>
-            <span className="text-[10px] text-muted">
-              ({weeklyFocus.filter((t) => !t.completed).length}/3)
-            </span>
-          </div>
-          <div className="space-y-0 pl-1">
-            {weeklyFocus.map((task) => (
+    <div className="h-full overflow-y-auto pr-1 pb-4">
+      <div className="space-y-6">
+        {/* Coach Tasks */}
+        <section>
+          <h3 className="text-sm font-semibold mb-2">Coach Tasks</h3>
+          <div className="space-y-0">
+            {coachTasks.map((task) => (
               <TaskItem key={task.id} task={task} />
             ))}
-            {weeklyFocus.length === 0 && (
-              <p className="text-xs text-muted py-2">No weekly focus items set</p>
+            {coachTasks.length === 0 && (
+              <p className="text-xs text-muted py-2">No coach tasks</p>
             )}
           </div>
-          {weeklyFocus.filter((t) => !t.completed).length < 3 && (
-            <div className="pl-1">
-              <InlineAddTask
-                isWeeklyFocus
-                onAdd={(title, dueDate) =>
-                  clientStore.addTask({
-                    clientId,
-                    title,
-                    completed: false,
-                    dueDate,
-                    owner: "client",
-                    isWeeklyFocus: true,
-                  })
-                }
-              />
-            </div>
-          )}
-        </div>
+          <InlineAddTask
+            onAdd={(title, dueDate) =>
+              clientStore.addTask({
+                clientId,
+                title,
+                completed: false,
+                dueDate,
+                owner: "coach",
+                isWeeklyFocus: false,
+              })
+            }
+          />
+        </section>
 
-        {/* Other client tasks */}
-        <div className="space-y-0">
-          {otherClientTasks.map((task) => (
-            <TaskItem key={task.id} task={task} />
-          ))}
-        </div>
-        <InlineAddTask
-          onAdd={(title, dueDate) =>
-            clientStore.addTask({
-              clientId,
-              title,
-              completed: false,
-              dueDate,
-              owner: "client",
-              isWeeklyFocus: false,
-            })
-          }
-        />
-      </section>
+        <hr className="border-black/5" />
+
+        {/* Client Tasks */}
+        <section>
+          <h3 className="text-sm font-semibold mb-3">Client Tasks</h3>
+
+          {/* Weekly Focus */}
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Target size={14} className="text-accent" />
+              <span className="text-xs font-medium text-accent">Weekly Focus</span>
+              <span className="text-[10px] text-muted">
+                ({weeklyFocus.filter((t) => !t.completed).length}/3)
+              </span>
+            </div>
+            <div className="space-y-0 pl-1">
+              {weeklyFocus.map((task) => (
+                <TaskItem key={task.id} task={task} />
+              ))}
+              {weeklyFocus.length === 0 && (
+                <p className="text-xs text-muted py-2">No weekly focus items set</p>
+              )}
+            </div>
+            {weeklyFocus.filter((t) => !t.completed).length < 3 && (
+              <div className="pl-1">
+                <InlineAddTask
+                  isWeeklyFocus
+                  onAdd={(title, dueDate) =>
+                    clientStore.addTask({
+                      clientId,
+                      title,
+                      completed: false,
+                      dueDate,
+                      owner: "client",
+                      isWeeklyFocus: true,
+                    })
+                  }
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Other client tasks */}
+          <div className="space-y-0">
+            {otherClientTasks.map((task) => (
+              <TaskItem key={task.id} task={task} />
+            ))}
+          </div>
+          <InlineAddTask
+            onAdd={(title, dueDate) =>
+              clientStore.addTask({
+                clientId,
+                title,
+                completed: false,
+                dueDate,
+                owner: "client",
+                isWeeklyFocus: false,
+              })
+            }
+          />
+        </section>
+      </div>
     </div>
   );
 }

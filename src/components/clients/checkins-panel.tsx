@@ -95,17 +95,60 @@ function SignaturePreview({ dataUrl }: { dataUrl: string }) {
         sourceCtx.drawImage(image, 0, 0);
         const imageData = sourceCtx.getImageData(0, 0, width, height);
         const pixels = imageData.data;
+        const luminances: number[] = [];
+        let brightCount = 0;
+        let darkCount = 0;
+
+        for (let i = 0; i < pixels.length; i += 4) {
+          const alpha = pixels[i + 3];
+          if (alpha === 0) continue;
+          const luminance = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+          luminances.push(luminance);
+          if (luminance >= 128) brightCount += 1;
+          else darkCount += 1;
+        }
+
+        if (luminances.length === 0) {
+          if (!cancelled) setProcessedSrc(dataUrl);
+          return;
+        }
+
+        luminances.sort((a, b) => a - b);
+        const p10 = luminances[Math.floor(luminances.length * 0.1)] ?? 0;
+        const p90 = luminances[Math.floor(luminances.length * 0.9)] ?? 255;
+        const contrast = p90 - p10;
+        if (contrast < 8) {
+          if (!cancelled) setProcessedSrc(dataUrl);
+          return;
+        }
+
+        const threshold = (p10 + p90) / 2;
+        const inkIsBright = brightCount < darkCount;
+        const minAlpha = 0.12;
 
         for (let i = 0; i < pixels.length; i += 4) {
           const alpha = pixels[i + 3];
           if (alpha === 0) continue;
 
           const luminance = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
-          const mappedAlpha = Math.round((luminance / 255) * alpha);
+          let inkStrength = 0;
+
+          if (inkIsBright) {
+            inkStrength = (luminance - threshold) / Math.max(1, 255 - threshold);
+          } else {
+            inkStrength = (threshold - luminance) / Math.max(1, threshold);
+          }
+
+          const normalized = Math.max(0, Math.min(1, inkStrength));
+          if (normalized < minAlpha) {
+            pixels[i + 3] = 0;
+            continue;
+          }
+
           pixels[i] = 0;
           pixels[i + 1] = 0;
           pixels[i + 2] = 0;
-          pixels[i + 3] = mappedAlpha;
+          pixels[i + 3] = Math.round(normalized * alpha);
         }
 
         sourceCtx.putImageData(imageData, 0, 0);

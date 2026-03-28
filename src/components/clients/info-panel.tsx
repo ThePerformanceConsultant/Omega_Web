@@ -98,69 +98,71 @@ export function InfoPanel({ clientId }: { clientId: string }) {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Personal Information */}
-      <CollapsibleSection title="Personal Information" icon="&#128100;" subtitle="Basic client details">
-        <div className="grid grid-cols-2 gap-3">
-          <InfoField label="Height" value={info.height_cm ? `${info.height_cm} cm` : "—"} />
-          <InfoField label="Weight" value={info.weight_kg ? `${info.weight_kg} kg` : (client.current_weight ? `${client.current_weight} kg` : "—")} />
-        </div>
-        <div className="grid grid-cols-3 gap-3">
-          <InfoField label="Age" value={info.age?.toString() || "—"} />
-          <InfoField label="Gender" value={info.gender ? info.gender.charAt(0).toUpperCase() + info.gender.slice(1) : "—"} />
-          <InfoField label="Primary Goal" value={info.goal_type || "—"} />
-        </div>
-      </CollapsibleSection>
-
-      {/* Activity & Metrics */}
-      <CollapsibleSection title="Activity & Metrics" icon="&#127939;" subtitle="Activity level and nutritional metrics">
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          <InfoField label="Activity Level" value={info.activity_level || "—"} />
-          <InfoField label="Training Days / Week" value={info.training_days_per_week?.toString() || "—"} />
-        </div>
-
-        {/* Metric Cards */}
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          <StatCard label="BMR" value={info.bmr?.toLocaleString() || "—"} unit="kcal/day" tooltip="Basal Metabolic Rate" />
-          <StatCard label="TDEE" value={info.tdee?.toLocaleString() || "—"} unit="kcal/day" tooltip="Total Daily Energy Expenditure" />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <StatCard label="PAL" value={info.pal?.toFixed(2) || "—"} tooltip="Physical Activity Level" />
-          <StatCard label="Recommended" value={info.recommended_kcal?.toLocaleString() || "—"} unit="kcal/day" />
-        </div>
-      </CollapsibleSection>
-
-      {/* Onboarding Questionnaire */}
-      <CollapsibleSection title="Onboarding Questionnaire" icon="&#128203;" subtitle="Client intake responses" defaultOpen={false}>
-        {info.onboarding_qa && info.onboarding_qa.length > 0 ? (
-          <div className="space-y-1">
-            {info.onboarding_qa.map((qa, i) => (
-              <div key={i} className="py-2 border-b border-black/5 last:border-0">
-                <p className="text-[11px] text-muted uppercase tracking-wider">{qa.question}</p>
-                <p className="text-sm font-medium mt-0.5">{qa.answer}</p>
-              </div>
-            ))}
+    <div className="h-full overflow-y-auto pr-1 pb-4">
+      <div className="space-y-4">
+        {/* Personal Information */}
+        <CollapsibleSection title="Personal Information" icon="&#128100;" subtitle="Basic client details">
+          <div className="grid grid-cols-2 gap-3">
+            <InfoField label="Height" value={info.height_cm ? `${info.height_cm} cm` : "—"} />
+            <InfoField label="Weight" value={info.weight_kg ? `${info.weight_kg} kg` : (client.current_weight ? `${client.current_weight} kg` : "—")} />
           </div>
-        ) : (
-          <p className="text-sm text-muted py-3">No onboarding questionnaire submitted yet</p>
-        )}
-      </CollapsibleSection>
-
-      {/* Nutrition Onboarding */}
-      <CollapsibleSection title="Nutrition Onboarding" icon="&#127860;" subtitle="Dietary assessment responses" defaultOpen={false}>
-        {info.nutrition_qa && info.nutrition_qa.length > 0 ? (
-          <div className="space-y-1">
-            {info.nutrition_qa.map((qa, i) => (
-              <div key={i} className="py-2 border-b border-black/5 last:border-0">
-                <p className="text-[11px] text-muted uppercase tracking-wider">{qa.question}</p>
-                <p className="text-sm font-medium mt-0.5">{qa.answer}</p>
-              </div>
-            ))}
+          <div className="grid grid-cols-3 gap-3">
+            <InfoField label="Age" value={info.age?.toString() || "—"} />
+            <InfoField label="Gender" value={info.gender ? info.gender.charAt(0).toUpperCase() + info.gender.slice(1) : "—"} />
+            <InfoField label="Primary Goal" value={info.goal_type || "—"} />
           </div>
-        ) : (
-          <p className="text-sm text-muted py-3">No nutrition questionnaire submitted yet</p>
-        )}
-      </CollapsibleSection>
+        </CollapsibleSection>
+
+        {/* Activity & Metrics */}
+        <CollapsibleSection title="Activity & Metrics" icon="&#127939;" subtitle="Activity level and nutritional metrics">
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <InfoField label="Activity Level" value={info.activity_level || "—"} />
+            <InfoField label="Training Days / Week" value={info.training_days_per_week?.toString() || "—"} />
+          </div>
+
+          {/* Metric Cards */}
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <StatCard label="BMR" value={info.bmr?.toLocaleString() || "—"} unit="kcal/day" tooltip="Basal Metabolic Rate" />
+            <StatCard label="TDEE" value={info.tdee?.toLocaleString() || "—"} unit="kcal/day" tooltip="Total Daily Energy Expenditure" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <StatCard label="PAL" value={info.pal?.toFixed(2) || "—"} tooltip="Physical Activity Level" />
+            <StatCard label="Recommended" value={info.recommended_kcal?.toLocaleString() || "—"} unit="kcal/day" />
+          </div>
+        </CollapsibleSection>
+
+        {/* Onboarding Questionnaire */}
+        <CollapsibleSection title="Onboarding Questionnaire" icon="&#128203;" subtitle="Client intake responses" defaultOpen={false}>
+          {info.onboarding_qa && info.onboarding_qa.length > 0 ? (
+            <div className="space-y-1">
+              {info.onboarding_qa.map((qa, i) => (
+                <div key={i} className="py-2 border-b border-black/5 last:border-0">
+                  <p className="text-[11px] text-muted uppercase tracking-wider">{qa.question}</p>
+                  <p className="text-sm font-medium mt-0.5">{qa.answer}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted py-3">No onboarding questionnaire submitted yet</p>
+          )}
+        </CollapsibleSection>
+
+        {/* Nutrition Onboarding */}
+        <CollapsibleSection title="Nutrition Onboarding" icon="&#127860;" subtitle="Dietary assessment responses" defaultOpen={false}>
+          {info.nutrition_qa && info.nutrition_qa.length > 0 ? (
+            <div className="space-y-1">
+              {info.nutrition_qa.map((qa, i) => (
+                <div key={i} className="py-2 border-b border-black/5 last:border-0">
+                  <p className="text-[11px] text-muted uppercase tracking-wider">{qa.question}</p>
+                  <p className="text-sm font-medium mt-0.5">{qa.answer}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted py-3">No nutrition questionnaire submitted yet</p>
+          )}
+        </CollapsibleSection>
+      </div>
     </div>
   );
 }
