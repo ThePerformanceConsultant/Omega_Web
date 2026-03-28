@@ -2,8 +2,21 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, CheckCheck, Search, Settings } from "lucide-react";
-import type { NotificationItem } from "@/lib/types";
+import {
+  ArrowLeft,
+  Bell,
+  Check,
+  CheckCheck,
+  CheckSquare,
+  ChevronDown,
+  ClipboardList,
+  Info,
+  MessageCircle,
+  Search,
+  Settings,
+  StickyNote,
+} from "lucide-react";
+import type { ClientPanelType, NotificationItem } from "@/lib/types";
 import { isSupabaseConfigured } from "@/lib/supabase/db";
 import {
   notificationStore,
@@ -11,6 +24,8 @@ import {
   useNotifications,
 } from "@/lib/notification-store";
 import { createClient } from "@/lib/supabase/client";
+import { Avatar } from "@/components/ui/avatar";
+import { clientViewStore, useClientViewState } from "@/lib/client-view-store";
 
 const pageTitles: Record<string, string> = {
   "/dashboard": "Dashboard",
@@ -26,6 +41,18 @@ const pageTitles: Record<string, string> = {
   "/branding": "Branding",
   "/settings": "Settings",
 };
+
+const CLIENT_PANELS: Array<{
+  key: Exclude<ClientPanelType, null>;
+  label: string;
+  icon: React.ComponentType<{ size?: number }>;
+}> = [
+  { key: "chat", label: "Chat", icon: MessageCircle },
+  { key: "tasks", label: "Tasks", icon: CheckSquare },
+  { key: "checkins", label: "Check-ins", icon: ClipboardList },
+  { key: "notes", label: "Notes", icon: StickyNote },
+  { key: "info", label: "Info", icon: Info },
+];
 
 function timeAgo(iso: string): string {
   const date = new Date(iso);
@@ -62,7 +89,7 @@ function notificationHeadline(item: NotificationItem): string {
     case "meal_plan_published":
       return `Meal plan published: ${mealPlanName}`;
     case "insight_published":
-      return `New coach insight available`;
+      return "New coach insight available";
     case "form_submitted":
       return `${clientName} submitted ${templateName}`;
     case "task_completed":
@@ -137,19 +164,36 @@ export function TopBar() {
   const pathname = usePathname();
   const router = useRouter();
   const [isFeedOpen, setIsFeedOpen] = useState(false);
+  const [isClientSwitcherOpen, setIsClientSwitcherOpen] = useState(false);
+  const [clientSearch, setClientSearch] = useState("");
   const feedRef = useRef<HTMLDivElement | null>(null);
+  const switcherRef = useRef<HTMLDivElement | null>(null);
   const notifications = useNotifications();
   const unreadCount = useNotificationUnreadCount();
+  const { clients, selectedClientId, activePanel } = useClientViewState();
+
+  const selectedClient = useMemo(
+    () => clients.find((client) => client.id === selectedClientId) ?? null,
+    [clients, selectedClientId],
+  );
+  const isClientDetail = pathname.startsWith("/clients") && selectedClient != null;
 
   const title =
-    Object.entries(pageTitles).find(([path]) =>
-      pathname.startsWith(path)
-    )?.[1] || "Dashboard";
+    Object.entries(pageTitles).find(([path]) => pathname.startsWith(path))?.[1] || "Dashboard";
 
-  const visibleNotifications = useMemo(
-    () => notifications.slice(0, 12),
-    [notifications]
-  );
+  const visibleNotifications = useMemo(() => notifications.slice(0, 12), [notifications]);
+
+  const filteredClients = useMemo(() => {
+    const q = clientSearch.trim().toLowerCase();
+    if (!q) return clients;
+    return clients.filter((client) => {
+      return (
+        client.full_name.toLowerCase().includes(q) ||
+        (client.email ?? "").toLowerCase().includes(q) ||
+        (client.tag ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [clientSearch, clients]);
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
@@ -160,16 +204,19 @@ export function TopBar() {
   }, []);
 
   useEffect(() => {
-    if (!isFeedOpen) return undefined;
     function handleOutsideClick(event: MouseEvent) {
       const target = event.target as Node;
       if (feedRef.current && !feedRef.current.contains(target)) {
         setIsFeedOpen(false);
       }
+      if (switcherRef.current && !switcherRef.current.contains(target)) {
+        setIsClientSwitcherOpen(false);
+      }
     }
+
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
-  }, [isFeedOpen]);
+  }, []);
 
   async function handleMarkAllRead() {
     try {
@@ -191,91 +238,189 @@ export function TopBar() {
     router.push(notificationTarget(item));
   }
 
+  function handleSelectClient(clientId: string) {
+    clientViewStore.selectClient(clientId, { closePanel: true });
+    setIsClientSwitcherOpen(false);
+    setClientSearch("");
+  }
+
   return (
-    <header className="sticky top-0 z-10 flex items-center justify-between px-8 py-4 border-b border-border-accent bg-background/80 backdrop-blur-sm">
-      <h2 className="text-lg font-semibold">{title}</h2>
+    <header className="sticky top-0 z-20 flex items-center justify-between gap-4 px-8 py-4 border-b border-border-accent bg-background/92 backdrop-blur-md">
+      {isClientDetail && selectedClient ? (
+        <>
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              onClick={() => clientViewStore.clearSelectedClient()}
+              className="p-2 rounded-lg border border-black/10 text-muted hover:text-foreground hover:bg-black/[0.04] transition-colors"
+              title="Back to clients"
+            >
+              <ArrowLeft size={17} />
+            </button>
 
-      <div className="flex items-center gap-3">
-        <button className="p-2 rounded-lg text-muted hover:text-foreground hover:bg-black/5 transition-colors">
-          <Search size={18} />
-        </button>
-        <button
-          onClick={() => router.push("/settings")}
-          className="p-2 rounded-lg text-muted hover:text-foreground hover:bg-black/5 transition-colors"
-          title="Settings"
-        >
-          <Settings size={18} />
-        </button>
-
-        <div className="relative" ref={feedRef}>
-          <button
-            onClick={() => setIsFeedOpen((open) => !open)}
-            className="relative p-2 rounded-lg text-muted hover:text-foreground hover:bg-black/5 transition-colors"
-            title="Notifications"
-          >
-            <Bell size={18} />
-            {unreadCount > 0 && (
-              <>
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-accent rounded-full" />
-                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-accent text-white text-[10px] font-semibold flex items-center justify-center">
-                  {unreadCount > 99 ? "99+" : unreadCount}
-                </span>
-              </>
-            )}
-          </button>
-
-          {isFeedOpen && (
-            <div className="absolute right-0 top-11 w-[360px] rounded-xl border border-black/10 bg-white shadow-2xl overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-black/10 bg-black/[0.02]">
-                <div>
-                  <p className="text-sm font-semibold text-foreground">Notifications</p>
-                  <p className="text-xs text-muted">{unreadCount} unread</p>
+            <div className="relative min-w-0" ref={switcherRef}>
+              <button
+                onClick={() => setIsClientSwitcherOpen((open) => !open)}
+                className="flex items-center gap-3 rounded-xl border border-black/10 bg-white px-3 py-1.5 min-w-[320px] hover:bg-black/[0.02] transition-colors"
+              >
+                <Avatar initials={selectedClient.avatar_initials || "?"} size={40} />
+                <div className="min-w-0 text-left">
+                  <p className="text-xl leading-tight font-semibold truncate">{selectedClient.full_name}</p>
                 </div>
-                <button
-                  onClick={handleMarkAllRead}
-                  disabled={unreadCount === 0}
-                  className="inline-flex items-center gap-1.5 text-xs font-medium text-accent disabled:text-muted disabled:cursor-not-allowed"
-                >
-                  <CheckCheck size={14} />
-                  Mark all read
-                </button>
-              </div>
+                <ChevronDown size={18} className="text-muted shrink-0 ml-auto" />
+              </button>
 
-              <div className="max-h-[420px] overflow-y-auto">
-                {visibleNotifications.length === 0 ? (
-                  <p className="px-4 py-10 text-sm text-muted text-center">
-                    No notifications yet.
-                  </p>
-                ) : (
-                  visibleNotifications.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={() => handleOpenNotification(item)}
-                      className={`w-full text-left px-4 py-3 border-b border-black/5 hover:bg-black/[0.03] transition-colors ${
-                        item.isRead ? "opacity-80" : ""
-                      }`}
-                    >
-                      <div className="flex items-start gap-2">
-                        <span
-                          className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
-                            item.isRead ? "bg-transparent border border-muted/40" : "bg-accent"
+              {isClientSwitcherOpen && (
+                <div className="absolute left-0 top-[calc(100%+8px)] w-[640px] max-w-[85vw] rounded-2xl border border-black/12 bg-white shadow-2xl overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 py-3 border-b border-black/10">
+                    <Search size={18} className="text-muted" />
+                    <input
+                      type="text"
+                      value={clientSearch}
+                      onChange={(event) => setClientSearch(event.target.value)}
+                      placeholder="Search clients..."
+                      className="w-full text-2xl bg-transparent border-0 outline-none placeholder:text-muted/70"
+                    />
+                  </div>
+                  <div className="max-h-[360px] overflow-y-auto hide-scrollbar p-2">
+                    {filteredClients.map((client) => {
+                      const isCurrent = client.id === selectedClient.id;
+                      return (
+                        <button
+                          key={client.id}
+                          onClick={() => handleSelectClient(client.id)}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-colors ${
+                            isCurrent ? "bg-black/[0.04]" : "hover:bg-black/[0.03]"
                           }`}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-foreground truncate">
-                            {notificationHeadline(item)}
-                          </p>
-                          <p className="text-xs text-muted mt-1">{timeAgo(item.createdAt)}</p>
-                        </div>
-                      </div>
-                    </button>
-                  ))
-                )}
-              </div>
+                        >
+                          <Avatar initials={client.avatar_initials || "?"} size={36} />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-lg leading-tight font-semibold truncate">{client.full_name}</p>
+                            <p className="text-xs leading-tight text-success mt-1">Active</p>
+                          </div>
+                          {isCurrent && <Check size={18} className="text-success shrink-0" />}
+                        </button>
+                      );
+                    })}
+                    {filteredClients.length === 0 && (
+                      <p className="px-3 py-6 text-sm text-muted text-center">No matching clients.</p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      </div>
+
+            <span className="px-3 py-1 rounded-xl text-sm leading-none font-medium bg-success/15 text-success">
+              Active
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {CLIENT_PANELS.map((panel) => {
+              const isActive = activePanel === panel.key;
+              return (
+                <button
+                  key={panel.key}
+                  onClick={() => clientViewStore.setActivePanel(isActive ? null : panel.key)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold border transition-colors ${
+                    isActive
+                      ? "bg-accent text-white border-accent"
+                      : "bg-white border-black/15 text-foreground/80 hover:bg-black/[0.04]"
+                  }`}
+                >
+                  <panel.icon size={15} />
+                  {panel.label}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <>
+          <h2 className="text-lg font-semibold">{title}</h2>
+
+          <div className="flex items-center gap-3">
+            <button className="p-2 rounded-lg text-muted hover:text-foreground hover:bg-black/5 transition-colors">
+              <Search size={18} />
+            </button>
+            <button
+              onClick={() => router.push("/settings")}
+              className="p-2 rounded-lg text-muted hover:text-foreground hover:bg-black/5 transition-colors"
+              title="Settings"
+            >
+              <Settings size={18} />
+            </button>
+
+            <div className="relative" ref={feedRef}>
+              <button
+                onClick={() => setIsFeedOpen((open) => !open)}
+                className="relative p-2 rounded-lg text-muted hover:text-foreground hover:bg-black/5 transition-colors"
+                title="Notifications"
+              >
+                <Bell size={18} />
+                {unreadCount > 0 && (
+                  <>
+                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-accent rounded-full" />
+                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-accent text-white text-[10px] font-semibold flex items-center justify-center">
+                      {unreadCount > 99 ? "99+" : unreadCount}
+                    </span>
+                  </>
+                )}
+              </button>
+
+              {isFeedOpen && (
+                <div className="absolute right-0 top-11 w-[360px] rounded-xl border border-black/10 bg-white shadow-2xl overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-black/10 bg-black/[0.02]">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">Notifications</p>
+                      <p className="text-xs text-muted">{unreadCount} unread</p>
+                    </div>
+                    <button
+                      onClick={handleMarkAllRead}
+                      disabled={unreadCount === 0}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-accent disabled:text-muted disabled:cursor-not-allowed"
+                    >
+                      <CheckCheck size={14} />
+                      Mark all read
+                    </button>
+                  </div>
+
+                  <div className="max-h-[420px] overflow-y-auto">
+                    {visibleNotifications.length === 0 ? (
+                      <p className="px-4 py-10 text-sm text-muted text-center">
+                        No notifications yet.
+                      </p>
+                    ) : (
+                      visibleNotifications.map((item) => (
+                        <button
+                          key={item.id}
+                          onClick={() => handleOpenNotification(item)}
+                          className={`w-full text-left px-4 py-3 border-b border-black/5 hover:bg-black/[0.03] transition-colors ${
+                            item.isRead ? "opacity-80" : ""
+                          }`}
+                        >
+                          <div className="flex items-start gap-2">
+                            <span
+                              className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
+                                item.isRead ? "bg-transparent border border-muted/40" : "bg-accent"
+                              }`}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-foreground truncate">
+                                {notificationHeadline(item)}
+                              </p>
+                              <p className="text-xs text-muted mt-1">{timeAgo(item.createdAt)}</p>
+                            </div>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </header>
   );
 }

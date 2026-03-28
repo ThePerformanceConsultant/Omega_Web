@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Client, ClientPanelType, ClientSubTab } from "@/lib/types";
+import { Client, ClientSubTab } from "@/lib/types";
 import { clientStore } from "@/lib/client-store";
+import { clientViewStore, useClientViewState } from "@/lib/client-view-store";
 import { createClient } from "@/lib/supabase/client";
-import { ClientHeader } from "./client-header";
 import { SubTabBar } from "./sub-tab-bar";
 import { SidePanel } from "./side-panel";
 import { ChatPanel } from "./chat-panel";
@@ -28,16 +28,12 @@ const PANEL_TITLES: Record<string, string> = {
 
 export function ClientProfile({
   client,
-  onBack,
   initialTab,
-  initialPanel,
 }: {
   client: Client;
-  onBack: () => void;
   initialTab?: ClientSubTab;
-  initialPanel?: ClientPanelType;
 }) {
-  const [activePanel, setActivePanel] = useState<ClientPanelType>(initialPanel ?? null);
+  const { activePanel } = useClientViewState();
   const [activeSubTab, setActiveSubTab] = useState<ClientSubTab>(initialTab ?? "overview");
 
   // Hydrate tasks & notes for this client
@@ -51,14 +47,6 @@ export function ClientProfile({
 
   return (
     <div className="space-y-4">
-      {/* Header — always visible */}
-      <ClientHeader
-        client={client}
-        activePanel={activePanel}
-        onPanelToggle={setActivePanel}
-        onBack={onBack}
-      />
-
       {/* Sub-tab navigation */}
       <SubTabBar activeTab={activeSubTab} onTabChange={setActiveSubTab} />
 
@@ -95,7 +83,7 @@ export function ClientProfile({
         {activePanel && (
           <SidePanel
             title={PANEL_TITLES[activePanel]}
-            onClose={() => setActivePanel(null)}
+            onClose={() => clientViewStore.setActivePanel(null)}
           >
             {activePanel === "chat" && <ChatPanel clientId={client.id} />}
             {activePanel === "tasks" && <TasksPanel clientId={client.id} />}

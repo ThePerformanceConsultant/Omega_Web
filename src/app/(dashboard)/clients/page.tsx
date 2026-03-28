@@ -7,6 +7,7 @@ import { Client, ClientPanelType, ClientSubTab } from "@/lib/types";
 import { Avatar } from "@/components/ui/avatar";
 import { ClientProfile } from "@/components/clients/client-profile";
 import { fetchClients, getCoachInviteCode } from "@/lib/supabase/db";
+import { clientViewStore, useClientViewState, useSelectedClient } from "@/lib/client-view-store";
 
 function complianceColor(pct: number) {
   if (pct >= 90) return "text-success";
@@ -30,11 +31,10 @@ export default function ClientsPage() {
 
 function ClientsPageInner() {
   const searchParams = useSearchParams();
-  const [clients, setClients] = useState<Client[]>([]);
+  const { clients, selectedClientId } = useClientViewState();
+  const selectedClient = useSelectedClient();
   const [search, setSearch] = useState("");
-  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [initialTab, setInitialTab] = useState<ClientSubTab | undefined>(undefined);
-  const [initialPanel, setInitialPanel] = useState<ClientPanelType>(null);
 
   // Invite code
   const [inviteCode, setInviteCode] = useState<string | null>(null);
@@ -51,7 +51,7 @@ function ClientsPageInner() {
 
   useEffect(() => {
     fetchClients()
-      .then((data) => setClients(data as Client[]))
+      .then((data) => clientViewStore.setClients(data as Client[]))
       .catch((err) => console.error("[Clients] fetch failed:", err));
 
     getCoachInviteCode().then(setInviteCode);
@@ -62,19 +62,25 @@ function ClientsPageInner() {
   const pendingTab = searchParams.get("tab") as ClientSubTab | null;
   const pendingPanel = searchParams.get("panel");
   useEffect(() => {
-    if (!pendingClientId || selectedClient) return;
+    if (!pendingClientId || selectedClientId) return;
     const match = clients.find((c) => c.id === pendingClientId);
     if (match) {
       queueMicrotask(() => {
-        setSelectedClient(match);
+        clientViewStore.selectClient(match.id);
         if (pendingTab) setInitialTab(pendingTab);
         if (pendingPanel === "chat" || pendingPanel === "tasks" || pendingPanel === "checkins" || pendingPanel === "notes" || pendingPanel === "info") {
-          setInitialPanel(pendingPanel);
+          clientViewStore.setActivePanel(pendingPanel as ClientPanelType);
         }
         window.history.replaceState({}, "", "/clients");
       });
     }
-  }, [clients, pendingClientId, pendingPanel, pendingTab, selectedClient]);
+  }, [clients, pendingClientId, pendingPanel, pendingTab, selectedClientId]);
+
+  useEffect(() => {
+    if (!selectedClientId) {
+      setInitialTab(undefined);
+    }
+  }, [selectedClientId]);
 
   const filtered = useMemo(() => {
     if (!search) return clients;
@@ -121,7 +127,7 @@ function ClientsPageInner() {
 
       // Refresh client list
       fetchClients()
-        .then((fresh) => setClients(fresh as Client[]))
+        .then((fresh) => clientViewStore.setClients(fresh as Client[]))
         .catch(() => {});
     } catch {
       setAddError("An unexpected error occurred");
@@ -142,13 +148,7 @@ function ClientsPageInner() {
     return (
       <ClientProfile
         client={selectedClient}
-        onBack={() => {
-          setSelectedClient(null);
-          setInitialTab(undefined);
-          setInitialPanel(null);
-        }}
         initialTab={initialTab}
-        initialPanel={initialPanel}
       />
     );
   }
@@ -212,7 +212,7 @@ function ClientsPageInner() {
         {filtered.map((c, i) => (
           <button
             key={c.id}
-            onClick={() => setSelectedClient(c)}
+            onClick={() => clientViewStore.selectClient(c.id, { closePanel: true })}
             className={`flex items-center gap-4 w-full px-5 py-3.5 text-left hover:bg-black/5 transition-colors ${
               i > 0 ? "border-t border-black/5" : ""
             }`}
