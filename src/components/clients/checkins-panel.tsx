@@ -96,14 +96,21 @@ function SignaturePreview({ dataUrl }: { dataUrl: string }) {
         const imageData = sourceCtx.getImageData(0, 0, width, height);
         const pixels = imageData.data;
         const luminances: number[] = [];
+        const totalPixelCount = width * height;
         let brightCount = 0;
         let darkCount = 0;
+        let luminanceSum = 0;
+        let minLum = 255;
+        let maxLum = 0;
 
         for (let i = 0; i < pixels.length; i += 4) {
           const alpha = pixels[i + 3];
           if (alpha === 0) continue;
           const luminance = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
           luminances.push(luminance);
+          luminanceSum += luminance;
+          if (luminance < minLum) minLum = luminance;
+          if (luminance > maxLum) maxLum = luminance;
           if (luminance >= 128) brightCount += 1;
           else darkCount += 1;
         }
@@ -113,31 +120,22 @@ function SignaturePreview({ dataUrl }: { dataUrl: string }) {
           return;
         }
 
-        luminances.sort((a, b) => a - b);
-        const p10 = luminances[Math.floor(luminances.length * 0.1)] ?? 0;
-        const p90 = luminances[Math.floor(luminances.length * 0.9)] ?? 255;
-        const contrast = p90 - p10;
-        if (contrast < 8) {
-          if (!cancelled) setProcessedSrc(dataUrl);
-          return;
-        }
-
-        const threshold = (p10 + p90) / 2;
-        const inkIsBright = brightCount < darkCount;
-        const minAlpha = 0.12;
+        const nonTransparentRatio = totalPixelCount > 0 ? luminances.length / totalPixelCount : 0;
+        const averageLum = luminanceSum / luminances.length;
+        const contrast = maxLum - minLum;
+        const sparseInkOnlyCapture = nonTransparentRatio < 0.35 || contrast < 8;
+        const threshold = (minLum + maxLum) / 2;
+        const inkIsBright = sparseInkOnlyCapture ? averageLum >= 128 : brightCount < darkCount;
+        const minAlpha = sparseInkOnlyCapture ? 0.04 : 0.1;
 
         for (let i = 0; i < pixels.length; i += 4) {
           const alpha = pixels[i + 3];
           if (alpha === 0) continue;
 
           const luminance = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
-          let inkStrength = 0;
-
-          if (inkIsBright) {
-            inkStrength = (luminance - threshold) / Math.max(1, 255 - threshold);
-          } else {
-            inkStrength = (threshold - luminance) / Math.max(1, threshold);
-          }
+          const inkStrength = inkIsBright
+            ? (luminance - threshold) / Math.max(1, 255 - threshold)
+            : (threshold - luminance) / Math.max(1, threshold);
 
           const normalized = Math.max(0, Math.min(1, inkStrength));
           if (normalized < minAlpha) {

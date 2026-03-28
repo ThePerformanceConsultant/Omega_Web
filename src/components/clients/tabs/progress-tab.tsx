@@ -1499,6 +1499,13 @@ function HRZoneBar({ zones }: { zones: Record<string, number> }) {
   const totalSeconds = zoneKeys.reduce((sum, k) => sum + (zones[k] ?? 0), 0);
   if (totalSeconds <= 0) return null;
 
+  const formatZoneRange = (zoneKey: string, minBpm: number, maxBpm: number) => {
+    if (!Number.isFinite(minBpm) || !Number.isFinite(maxBpm)) return null;
+    if (zoneKey === "zone1") return `≤ ${Math.round(maxBpm)}`;
+    if (zoneKey === "zone5") return `≥ ${Math.round(minBpm)}`;
+    return `${Math.round(minBpm)}-${Math.round(maxBpm)}`;
+  };
+
   return (
     <div>
       <p className="text-xs text-muted mb-2 font-medium">Heart Rate Zones</p>
@@ -1526,13 +1533,17 @@ function HRZoneBar({ zones }: { zones: Record<string, number> }) {
           const s = Math.round(secs % 60);
           const minBpm = zones[`${k}_min_bpm`];
           const maxBpm = zones[`${k}_max_bpm`];
+          const rangeLabel =
+            minBpm != null && maxBpm != null
+              ? formatZoneRange(k, minBpm, maxBpm)
+              : null;
           return (
             <div key={k} className="flex items-center gap-1.5 text-[11px]">
               <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: ZONE_COLORS[i] }} />
               <span className="font-medium">{zoneLabels[i]}</span>
               <span className="text-muted">{mins}:{String(s).padStart(2, "0")}</span>
-              {minBpm != null && maxBpm != null && (
-                <span className="text-muted text-[10px]">{Math.round(minBpm)}-{Math.round(maxBpm)}</span>
+              {rangeLabel && (
+                <span className="text-muted text-[10px]">{rangeLabel}</span>
               )}
             </div>
           );
