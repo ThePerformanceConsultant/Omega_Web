@@ -16,6 +16,7 @@ import {
   Calendar,
   BarChart3,
   FolderOpen,
+  Bot,
   Palette,
   Settings,
   ChevronLeft,
@@ -40,6 +41,7 @@ const baseNavItems = [
   { id: "calendar", label: "Calendar", icon: Calendar, href: "/calendar" },
   { id: "analytics", label: "Analytics", icon: BarChart3, href: "/analytics" },
   { id: "vault", label: "Vault", icon: FolderOpen, href: "/vault" },
+  { id: "automations", label: "Automations", icon: Bot, href: "/automations" },
   { id: "branding", label: "Branding", icon: Palette, href: "/branding" },
   { id: "settings", label: "Settings", icon: Settings, href: "/settings" },
 ];

@@ -1177,6 +1177,32 @@ export interface AutomationTemplateStepAssignment {
   folderSection: VaultSection;
 }
 
+export interface AutomationAssignableItemPreview {
+  id: number;
+  title: string;
+  itemType: VaultItemType;
+  externalUrl: string | null;
+  thumbnailUrl: string | null;
+  folderId: number;
+  folderName: string;
+}
+
+export interface AutomationAssignableFolder {
+  id: number;
+  name: string;
+  pathLabel: string;
+  section: "courses" | "resources";
+  description: string | null;
+  thumbnailUrl: string | null;
+  depth: number;
+  rootFolderId: number;
+  rootFolderName: string;
+  directChildFolderCount: number;
+  descendantFolderCount: number;
+  descendantItemCount: number;
+  previewItems: AutomationAssignableItemPreview[];
+}
+
 export interface AutomationTemplateStep {
   id: number;
   stepOrder: number;

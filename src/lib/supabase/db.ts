@@ -365,10 +365,13 @@ import type {
   AutomationTemplate,
   AutomationTemplateStep,
   AutomationTemplateStepAssignment,
+  AutomationAssignableFolder,
+  AutomationAssignableItemPreview,
   ClientAutomationAssignment,
   ClientAutomationStepRun,
   AutomationAssignmentType,
   AutomationStepRunStatus,
+  VaultItemType,
   CurriculumProgram,
   CurriculumWeek,
   CurriculumTouchpoint,
@@ -3507,6 +3510,156 @@ export async function fetchVaultFolders(section: "resources" | "courses", parent
   const { data, error } = await query;
   if (error) throw error;
   return data ?? [];
+}
+
+type AutomationVaultFolderRow = {
+  id: number;
+  parent_id: number | null;
+  section: "resources" | "courses";
+  name: string;
+  description: string | null;
+  thumbnail_url: string | null;
+  sort_order: number | null;
+  created_at: string;
+};
+
+type AutomationVaultItemRow = {
+  id: number;
+  folder_id: number;
+  title: string;
+  item_type: VaultItemType;
+  external_url: string | null;
+  thumbnail_url: string | null;
+  sort_order: number | null;
+  created_at: string;
+};
+
+export async function fetchAutomationAssignableFolders(
+  section: "resources" | "courses",
+): Promise<AutomationAssignableFolder[]> {
+  const client = getClient();
+  const [foldersResult, itemsResult] = await Promise.all([
+    client
+      .from("vault_folders")
+      .select("id,parent_id,section,name,description,thumbnail_url,sort_order,created_at")
+      .eq("section", section)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true }),
+    client
+      .from("vault_items")
+      .select("id,folder_id,title,item_type,external_url,thumbnail_url,sort_order,created_at")
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true }),
+  ]);
+
+  if (foldersResult.error) throw foldersResult.error;
+  if (itemsResult.error) throw itemsResult.error;
+
+  const folders = (foldersResult.data ?? []) as AutomationVaultFolderRow[];
+  const folderIds = new Set(folders.map((folder) => Number(folder.id)));
+  const items = ((itemsResult.data ?? []) as AutomationVaultItemRow[]).filter((item) =>
+    folderIds.has(Number(item.folder_id)),
+  );
+
+  const childFoldersByParent = new Map<number | null, AutomationVaultFolderRow[]>();
+  const itemsByFolder = new Map<number, AutomationVaultItemRow[]>();
+  const folderById = new Map<number, AutomationVaultFolderRow>();
+
+  for (const folder of folders) {
+    folderById.set(Number(folder.id), folder);
+    const parentId = folder.parent_id == null ? null : Number(folder.parent_id);
+    const siblings = childFoldersByParent.get(parentId) ?? [];
+    siblings.push(folder);
+    childFoldersByParent.set(parentId, siblings);
+  }
+
+  for (const item of items) {
+    const folderItems = itemsByFolder.get(Number(item.folder_id)) ?? [];
+    folderItems.push(item);
+    itemsByFolder.set(Number(item.folder_id), folderItems);
+  }
+
+  function collectFolderSummary(folder: AutomationVaultFolderRow): AutomationAssignableFolder {
+    const stack = [Number(folder.id)];
+    const previewItems: AutomationAssignableItemPreview[] = [];
+    let directChildFolderCount = 0;
+    let descendantFolderCount = 0;
+    let descendantItemCount = 0;
+
+    const pathSegments: string[] = [folder.name];
+    let currentParentId = folder.parent_id == null ? null : Number(folder.parent_id);
+    let rootFolderId = Number(folder.id);
+    let rootFolderName = folder.name;
+    while (currentParentId != null) {
+      const parent = folderById.get(currentParentId);
+      if (!parent) break;
+      pathSegments.unshift(parent.name);
+      rootFolderId = Number(parent.id);
+      rootFolderName = parent.name;
+      currentParentId = parent.parent_id == null ? null : Number(parent.parent_id);
+    }
+
+    while (stack.length > 0) {
+      const folderId = stack.pop();
+      if (folderId == null) continue;
+
+      const childFolders = childFoldersByParent.get(folderId) ?? [];
+      if (folderId === Number(folder.id)) {
+        directChildFolderCount = childFolders.length;
+      }
+      descendantFolderCount += childFolders.length;
+      for (let index = childFolders.length - 1; index >= 0; index -= 1) {
+        stack.push(Number(childFolders[index].id));
+      }
+
+      const folderItems = itemsByFolder.get(folderId) ?? [];
+      descendantItemCount += folderItems.length;
+      const sourceFolder = folderById.get(folderId);
+      if (!sourceFolder) continue;
+
+      for (const item of folderItems) {
+        if (previewItems.length >= 3) break;
+        previewItems.push({
+          id: Number(item.id),
+          title: item.title,
+          itemType: item.item_type,
+          externalUrl: item.external_url ?? null,
+          thumbnailUrl: item.thumbnail_url ?? null,
+          folderId,
+          folderName: sourceFolder.name,
+        });
+      }
+    }
+
+    return {
+      id: Number(folder.id),
+      name: folder.name,
+      pathLabel: pathSegments.join(" / "),
+      section,
+      description: folder.description ?? null,
+      thumbnailUrl: folder.thumbnail_url ?? null,
+      depth: pathSegments.length - 1,
+      rootFolderId,
+      rootFolderName,
+      directChildFolderCount,
+      descendantFolderCount,
+      descendantItemCount,
+      previewItems,
+    };
+  }
+
+  const orderedFolders: AutomationAssignableFolder[] = [];
+
+  function appendFolderTree(parentId: number | null) {
+    const foldersForParent = childFoldersByParent.get(parentId) ?? [];
+    for (const folder of foldersForParent) {
+      orderedFolders.push(collectFolderSummary(folder));
+      appendFolderTree(Number(folder.id));
+    }
+  }
+
+  appendFolderTree(null);
+  return orderedFolders;
 }
 
 export async function fetchVaultFolderById(folderId: number) {

@@ -7,53 +7,27 @@ import {
   ChevronDown,
   Clock3,
   Plus,
-  Trash2,
+  RefreshCw,
   X,
 } from "lucide-react";
 import type {
-  AutomationAssignmentType,
+  AutomationAssignableFolder,
   AutomationTemplate,
   ClientAutomationAssignment,
 } from "@/lib/types";
 import {
   assignAutomationTemplateToClient,
+  fetchAutomationAssignableFolders,
   fetchClientAutomations,
   fetchCoachAutomationTemplates,
-  fetchVaultFolders,
   runDueAutomationSteps,
   upsertAutomationTemplate,
 } from "@/lib/supabase/db";
-
-type AssignableFolder = {
-  id: number;
-  name: string;
-  section: "courses" | "resources";
-};
-
-type StepDraft = {
-  id: string;
-  dayOffset: number;
-  title: string;
-  message: string;
-  assignments: Array<{
-    assignmentType: AutomationAssignmentType;
-    folderId: number;
-  }>;
-  draftType: AutomationAssignmentType;
-  draftFolderId: number | "";
-};
-
-function createStepDraft(order: number): StepDraft {
-  return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    dayOffset: Math.max(0, order - 1),
-    title: `Step ${order}`,
-    message: "",
-    assignments: [],
-    draftType: "course",
-    draftFolderId: "",
-  };
-}
+import {
+  AutomationTemplateStepEditor,
+  createAutomationStepDraft,
+  type AutomationStepDraft,
+} from "@/components/automations/template-step-editor";
 
 function formatDateTime(value: string | null): string {
   if (!value) return "—";
@@ -81,11 +55,31 @@ function statusBadgeClasses(status: ClientAutomationAssignment["status"]): strin
   }
 }
 
+function describeFolder(folder: AutomationAssignableFolder): string {
+  const parts: string[] = [];
+  if (folder.section === "courses" && folder.directChildFolderCount > 0) {
+    parts.push(
+      `${folder.directChildFolderCount} ${folder.directChildFolderCount === 1 ? "module" : "modules"}`,
+    );
+  }
+  if (folder.descendantFolderCount > folder.directChildFolderCount) {
+    const deeperCount = folder.descendantFolderCount - folder.directChildFolderCount;
+    parts.push(`${deeperCount} nested ${deeperCount === 1 ? "folder" : "folders"}`);
+  }
+  if (folder.descendantItemCount > 0) {
+    parts.push(
+      `${folder.descendantItemCount} ${folder.descendantItemCount === 1 ? "item" : "items"}`,
+    );
+  }
+  if (parts.length === 0) return "No nested content yet";
+  return parts.join(" • ");
+}
+
 export function AutomationsTab({ clientId }: { clientId: string }) {
   const [templates, setTemplates] = useState<AutomationTemplate[]>([]);
   const [assignments, setAssignments] = useState<ClientAutomationAssignment[]>([]);
-  const [courseFolders, setCourseFolders] = useState<AssignableFolder[]>([]);
-  const [resourceFolders, setResourceFolders] = useState<AssignableFolder[]>([]);
+  const [courseFolders, setCourseFolders] = useState<AutomationAssignableFolder[]>([]);
+  const [resourceFolders, setResourceFolders] = useState<AutomationAssignableFolder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,8 +89,23 @@ export function AutomationsTab({ clientId }: { clientId: string }) {
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [templateName, setTemplateName] = useState("");
   const [templateDescription, setTemplateDescription] = useState("");
-  const [steps, setSteps] = useState<StepDraft[]>([createStepDraft(1)]);
+  const [steps, setSteps] = useState<AutomationStepDraft[]>([createAutomationStepDraft(1)]);
   const [submitting, setSubmitting] = useState(false);
+  const [refreshingFolders, setRefreshingFolders] = useState(false);
+
+  const refreshAssignableFolders = useCallback(async () => {
+    setRefreshingFolders(true);
+    try {
+      const [fetchedCourseFolders, fetchedResourceFolders] = await Promise.all([
+        fetchAutomationAssignableFolders("courses"),
+        fetchAutomationAssignableFolders("resources"),
+      ]);
+      setCourseFolders(fetchedCourseFolders);
+      setResourceFolders(fetchedResourceFolders);
+    } finally {
+      setRefreshingFolders(false);
+    }
+  }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -104,37 +113,21 @@ export function AutomationsTab({ clientId }: { clientId: string }) {
     try {
       await runDueAutomationSteps({ clientId, limit: 250 }).catch(() => undefined);
 
-      const [fetchedTemplates, fetchedAssignments, fetchedCourseFolders, fetchedResourceFolders] =
-        await Promise.all([
-          fetchCoachAutomationTemplates(),
-          fetchClientAutomations(clientId),
-          fetchVaultFolders("courses", null),
-          fetchVaultFolders("resources", null),
-        ]);
+      const [fetchedTemplates, fetchedAssignments] = await Promise.all([
+        fetchCoachAutomationTemplates(),
+        fetchClientAutomations(clientId),
+        refreshAssignableFolders(),
+      ]);
 
       setTemplates(fetchedTemplates);
       setAssignments(fetchedAssignments);
-      setCourseFolders(
-        (fetchedCourseFolders ?? []).map((row: Record<string, unknown>) => ({
-          id: Number(row.id),
-          name: String(row.name ?? "Untitled"),
-          section: "courses",
-        })),
-      );
-      setResourceFolders(
-        (fetchedResourceFolders ?? []).map((row: Record<string, unknown>) => ({
-          id: Number(row.id),
-          name: String(row.name ?? "Untitled"),
-          section: "resources",
-        })),
-      );
     } catch (err) {
       console.error("[AutomationsTab] load failed:", err);
       setError(err instanceof Error ? err.message : "Failed to load automations.");
     } finally {
       setLoading(false);
     }
-  }, [clientId]);
+  }, [clientId, refreshAssignableFolders]);
 
   useEffect(() => {
     loadData();
@@ -153,60 +146,22 @@ export function AutomationsTab({ clientId }: { clientId: string }) {
     setStartDate(new Date().toISOString().slice(0, 10));
     setTemplateName("");
     setTemplateDescription("");
-    setSteps([createStepDraft(1)]);
+    setSteps([createAutomationStepDraft(1)]);
     setError(null);
   }
 
   function openCreateFlow() {
     resetFlow();
+    void refreshAssignableFolders().catch((err) => {
+      console.error("[AutomationsTab] assignable refresh failed:", err);
+      setError(err instanceof Error ? err.message : "Failed to refresh Vault content.");
+    });
     setShowCreateFlow(true);
   }
 
   function closeCreateFlow() {
     setShowCreateFlow(false);
     setSubmitting(false);
-  }
-
-  function updateStep(stepId: string, updater: (step: StepDraft) => StepDraft) {
-    setSteps((prev) => prev.map((step) => (step.id === stepId ? updater(step) : step)));
-  }
-
-  function addAssignmentToStep(stepId: string) {
-    updateStep(stepId, (step) => {
-      if (step.draftFolderId === "") return step;
-      if (
-        step.assignments.some(
-          (entry) =>
-            entry.assignmentType === step.draftType &&
-            entry.folderId === Number(step.draftFolderId),
-        )
-      ) {
-        return step;
-      }
-      return {
-        ...step,
-        assignments: [
-          ...step.assignments,
-          {
-            assignmentType: step.draftType,
-            folderId: Number(step.draftFolderId),
-          },
-        ],
-      };
-    });
-  }
-
-  function removeAssignmentFromStep(
-    stepId: string,
-    assignmentType: AutomationAssignmentType,
-    folderId: number,
-  ) {
-    updateStep(stepId, (step) => ({
-      ...step,
-      assignments: step.assignments.filter(
-        (entry) => !(entry.assignmentType === assignmentType && entry.folderId === folderId),
-      ),
-    }));
   }
 
   async function handleSubmitFlow(e: React.FormEvent) {
@@ -275,7 +230,9 @@ export function AutomationsTab({ clientId }: { clientId: string }) {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-xl font-semibold text-foreground">Automations</h3>
-          <p className="text-sm text-muted">Step-scheduled assignments for client course/resource delivery.</p>
+          <p className="text-sm text-muted">
+            Step-scheduled assignments for client course/resource delivery.
+          </p>
         </div>
         <button
           onClick={openCreateFlow}
@@ -292,57 +249,86 @@ export function AutomationsTab({ clientId }: { clientId: string }) {
         <div className="py-16 flex flex-col items-center gap-3 text-center border border-black/10 rounded-2xl bg-black/[0.02]">
           <Bot size={28} className="text-muted/60" />
           <p className="text-base font-semibold text-foreground">No automations assigned</p>
-          <p className="text-sm text-muted">Assign a template to automatically deliver courses/resources over time.</p>
+          <p className="text-sm text-muted">
+            Assign a template to automatically deliver courses/resources over time.
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
           {assignments.map((assignment) => {
-            const progress = assignment.totalSteps > 0
-              ? Math.round((assignment.executedSteps / assignment.totalSteps) * 100)
-              : 0;
-            const lastExecuted = assignment.steps
-              .filter((step) => step.runStatus === "executed" && step.executedAt)
-              .sort((a, b) => new Date(b.executedAt || 0).getTime() - new Date(a.executedAt || 0).getTime())[0] ?? null;
+            const progress =
+              assignment.totalSteps > 0
+                ? Math.round((assignment.executedSteps / assignment.totalSteps) * 100)
+                : 0;
+            const lastExecuted =
+              assignment.steps
+                .filter((step) => step.runStatus === "executed" && step.executedAt)
+                .sort(
+                  (a, b) =>
+                    new Date(b.executedAt || 0).getTime() -
+                    new Date(a.executedAt || 0).getTime(),
+                )[0] ?? null;
 
             return (
-              <details key={assignment.assignmentId} className="rounded-2xl border border-black/10 bg-white overflow-hidden group">
+              <details
+                key={assignment.assignmentId}
+                className="rounded-2xl border border-black/10 bg-white overflow-hidden group"
+              >
                 <summary className="list-none cursor-pointer px-4 py-3 flex items-center gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-sm font-semibold text-foreground truncate">{assignment.templateName}</p>
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full ${statusBadgeClasses(assignment.status)}`}>
+                      <p className="text-sm font-semibold text-foreground truncate">
+                        {assignment.templateName}
+                      </p>
+                      <span
+                        className={`text-[11px] px-2 py-0.5 rounded-full ${statusBadgeClasses(assignment.status)}`}
+                      >
                         {assignment.status}
                       </span>
                     </div>
                     <p className="text-xs text-muted mt-0.5">
-                      Next due: {formatDateTime(assignment.nextDueAt)} • Last executed: {formatDateTime(lastExecuted?.executedAt ?? null)}
+                      Next due: {formatDateTime(assignment.nextDueAt)} • Last executed:{" "}
+                      {formatDateTime(lastExecuted?.executedAt ?? null)}
                     </p>
                   </div>
                   <div className="w-32 hidden md:block">
                     <div className="h-1.5 rounded-full bg-black/10 overflow-hidden">
-                      <div className="h-full rounded-full bg-accent" style={{ width: `${progress}%` }} />
+                      <div
+                        className="h-full rounded-full bg-accent"
+                        style={{ width: `${progress}%` }}
+                      />
                     </div>
-                    <p className="text-[11px] text-muted mt-1 text-right">{assignment.executedSteps}/{assignment.totalSteps} steps</p>
+                    <p className="text-[11px] text-muted mt-1 text-right">
+                      {assignment.executedSteps}/{assignment.totalSteps} steps
+                    </p>
                   </div>
-                  <ChevronDown size={16} className="text-muted transition-transform group-open:rotate-180" />
+                  <ChevronDown
+                    size={16}
+                    className="text-muted transition-transform group-open:rotate-180"
+                  />
                 </summary>
 
                 <div className="border-t border-black/8 px-4 py-3 space-y-2">
                   {assignment.steps.map((step) => (
-                    <div key={`${assignment.assignmentId}-${step.stepId}`} className="rounded-xl border border-black/10 bg-black/[0.015] px-3 py-2">
+                    <div
+                      key={`${assignment.assignmentId}-${step.stepId}`}
+                      className="rounded-xl border border-black/10 bg-black/[0.015] px-3 py-2"
+                    >
                       <div className="flex items-center justify-between gap-3">
                         <p className="text-sm font-semibold text-foreground">
                           Day {step.dayOffset} • {step.title}
                         </p>
-                        <span className={`text-[11px] px-2 py-0.5 rounded-full ${statusBadgeClasses(
-                          step.runStatus === "executed"
-                            ? "completed"
-                            : step.runStatus === "failed"
-                              ? "cancelled"
-                              : step.runStatus === "pending"
-                                ? "active"
-                                : "paused",
-                        )}`}>
+                        <span
+                          className={`text-[11px] px-2 py-0.5 rounded-full ${statusBadgeClasses(
+                            step.runStatus === "executed"
+                              ? "completed"
+                              : step.runStatus === "failed"
+                                ? "cancelled"
+                                : step.runStatus === "pending"
+                                  ? "active"
+                                  : "paused",
+                          )}`}
+                        >
                           {step.runStatus}
                         </span>
                       </div>
@@ -353,7 +339,8 @@ export function AutomationsTab({ clientId }: { clientId: string }) {
                             key={`${step.stepId}-${item.assignmentType}-${item.folderId}`}
                             className="text-[10px] px-2 py-0.5 rounded-full bg-accent/10 text-accent"
                           >
-                            {item.assignmentType === "course" ? "Course" : "Resource"}: {item.folderName}
+                            {item.assignmentType === "course" ? "Course" : "Resource"}:{" "}
+                            {item.folderName}
                           </span>
                         ))}
                       </div>
@@ -372,18 +359,43 @@ export function AutomationsTab({ clientId }: { clientId: string }) {
           onClick={closeCreateFlow}
         >
           <form
-            className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl max-h-[85vh] overflow-hidden flex flex-col"
+            className="w-full max-w-4xl bg-white rounded-2xl shadow-2xl max-h-[85vh] overflow-hidden flex flex-col"
             onClick={(e) => e.stopPropagation()}
             onSubmit={handleSubmitFlow}
           >
             <div className="px-5 py-4 border-b border-black/10 flex items-center justify-between gap-3">
               <div>
                 <p className="text-lg font-semibold text-foreground">Assign automation</p>
-                <p className="text-xs text-muted">Deliver course/resource steps to this client on a schedule.</p>
+                <p className="text-xs text-muted">
+                  Deliver course/resource steps to this client on a schedule.
+                </p>
               </div>
-              <button type="button" onClick={closeCreateFlow} className="p-1.5 rounded-lg hover:bg-black/[0.04] text-muted">
-                <X size={18} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void refreshAssignableFolders().catch((err) => {
+                      console.error("[AutomationsTab] manual refresh failed:", err);
+                      setError(
+                        err instanceof Error
+                          ? err.message
+                          : "Failed to refresh Vault content.",
+                      );
+                    });
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-black/10 px-3 py-2 text-xs font-medium text-foreground hover:bg-black/[0.04]"
+                >
+                  <RefreshCw size={13} className={refreshingFolders ? "animate-spin" : ""} />
+                  Refresh content
+                </button>
+                <button
+                  type="button"
+                  onClick={closeCreateFlow}
+                  className="p-1.5 rounded-lg hover:bg-black/[0.04] text-muted"
+                >
+                  <X size={18} />
+                </button>
+              </div>
             </div>
 
             <div className="p-5 overflow-y-auto space-y-4">
@@ -392,7 +404,9 @@ export function AutomationsTab({ clientId }: { clientId: string }) {
                   type="button"
                   onClick={() => setMode("existing")}
                   className={`rounded-xl border px-4 py-3 text-left transition-colors ${
-                    mode === "existing" ? "border-accent bg-accent/5" : "border-black/10 hover:bg-black/[0.02]"
+                    mode === "existing"
+                      ? "border-accent bg-accent/5"
+                      : "border-black/10 hover:bg-black/[0.02]"
                   }`}
                 >
                   <p className="text-sm font-semibold text-foreground">Use existing template</p>
@@ -402,38 +416,101 @@ export function AutomationsTab({ clientId }: { clientId: string }) {
                   type="button"
                   onClick={() => setMode("create")}
                   className={`rounded-xl border px-4 py-3 text-left transition-colors ${
-                    mode === "create" ? "border-accent bg-accent/5" : "border-black/10 hover:bg-black/[0.02]"
+                    mode === "create"
+                      ? "border-accent bg-accent/5"
+                      : "border-black/10 hover:bg-black/[0.02]"
                   }`}
                 >
                   <p className="text-sm font-semibold text-foreground">Create new template</p>
-                  <p className="text-xs text-muted mt-1">Build a step schedule with day offsets.</p>
+                  <p className="text-xs text-muted mt-1">
+                    Build a step schedule with day offsets.
+                  </p>
                 </button>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-[1.2fr_0.8fr]">
                 {mode === "existing" ? (
-                  <label className="space-y-1">
-                    <span className="text-xs font-semibold text-muted">Template</span>
-                    <select
-                      value={selectedTemplateId}
-                      onChange={(e) =>
-                        setSelectedTemplateId(e.target.value ? Number(e.target.value) : "")
-                      }
-                      className="w-full rounded-lg border border-black/12 bg-black/[0.03] px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-accent/30 focus:border-accent/40"
-                    >
-                      <option value="">Select template...</option>
-                      {templates.map((template) => (
-                        <option key={template.id} value={template.id}>
-                          {template.name}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="space-y-3">
+                    <label className="space-y-1 block">
+                      <span className="text-xs font-semibold text-muted">Template</span>
+                      <select
+                        value={selectedTemplateId}
+                        onChange={(e) =>
+                          setSelectedTemplateId(e.target.value ? Number(e.target.value) : "")
+                        }
+                        className="w-full rounded-lg border border-black/12 bg-black/[0.03] px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-accent/30 focus:border-accent/40"
+                      >
+                        <option value="">Select template...</option>
+                        {templates.map((template) => (
+                          <option key={template.id} value={template.id}>
+                            {template.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
                     {selectedTemplate && (
-                      <p className="text-xs text-muted">
-                        {selectedTemplate.steps.length} steps • {selectedTemplate.activeAssignmentCount} active client assignments
-                      </p>
+                      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-foreground">
+                              {selectedTemplate.name}
+                            </p>
+                            {selectedTemplate.description && (
+                              <p className="text-xs text-muted mt-1">
+                                {selectedTemplate.description}
+                              </p>
+                            )}
+                          </div>
+                          <span className="text-[11px] px-2 py-1 rounded-full bg-black/[0.05] text-muted">
+                            {selectedTemplate.steps.length}{" "}
+                            {selectedTemplate.steps.length === 1 ? "step" : "steps"}
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-muted">
+                          {selectedTemplate.activeAssignmentCount} active client assignments
+                        </p>
+
+                        <div className="space-y-2">
+                      {selectedTemplate.steps.map((step) => (
+                            <div
+                              key={step.id}
+                              className="rounded-xl border border-black/8 bg-white px-3 py-2"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-semibold text-foreground">
+                                  Day {step.dayOffset} • {step.title}
+                                </p>
+                                <span className="text-[10px] px-2 py-1 rounded-full bg-accent/10 text-accent">
+                                  {step.assignments.length}{" "}
+                                  {step.assignments.length === 1
+                                    ? "assignment"
+                                    : "assignments"}
+                                </span>
+                              </div>
+                              {step.message && (
+                                <p className="text-xs text-muted mt-1">{step.message}</p>
+                              )}
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {step.assignments.map((assignment) => (
+                                  <span
+                                    key={assignment.id}
+                                    className="text-[10px] px-2 py-1 rounded-full bg-black/[0.04] text-foreground"
+                                  >
+                                    {assignment.assignmentType === "course"
+                                      ? "Course"
+                                      : "Resource"}
+                                    : {assignment.folderName}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
-                  </label>
+                  </div>
                 ) : (
                   <label className="space-y-1">
                     <span className="text-xs font-semibold text-muted">Template name</span>
@@ -460,7 +537,9 @@ export function AutomationsTab({ clientId }: { clientId: string }) {
               {mode === "create" && (
                 <>
                   <label className="space-y-1 block">
-                    <span className="text-xs font-semibold text-muted">Description (optional)</span>
+                    <span className="text-xs font-semibold text-muted">
+                      Description (optional)
+                    </span>
                     <textarea
                       value={templateDescription}
                       onChange={(e) => setTemplateDescription(e.target.value)}
@@ -469,167 +548,63 @@ export function AutomationsTab({ clientId }: { clientId: string }) {
                     />
                   </label>
 
-                  <div className="space-y-3">
-                    {steps.map((step, index) => {
-                      const stepFolders = step.draftType === "course" ? courseFolders : resourceFolders;
-
-                      return (
-                        <div key={step.id} className="rounded-xl border border-black/10 p-3 bg-black/[0.015] space-y-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-sm font-semibold text-foreground">Step {index + 1}</p>
-                            {steps.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setSteps((prev) => prev.filter((entry) => entry.id !== step.id))
-                                }
-                                className="p-1 rounded text-muted hover:text-danger hover:bg-black/[0.05]"
-                                title="Remove step"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            )}
-                          </div>
-
-                          <div className="grid sm:grid-cols-[120px_1fr] gap-2">
-                            <label className="space-y-1">
-                              <span className="text-[11px] font-semibold text-muted">Day offset</span>
-                              <input
-                                type="number"
-                                min={0}
-                                value={step.dayOffset}
-                                onChange={(e) =>
-                                  updateStep(step.id, (entry) => ({
-                                    ...entry,
-                                    dayOffset: Math.max(0, Number(e.target.value || 0)),
-                                  }))
-                                }
-                                className="w-full rounded-lg border border-black/12 bg-white px-2.5 py-2 text-sm outline-none focus:ring-1 focus:ring-accent/30 focus:border-accent/40"
-                              />
-                            </label>
-
-                            <label className="space-y-1">
-                              <span className="text-[11px] font-semibold text-muted">Title</span>
-                              <input
-                                value={step.title}
-                                onChange={(e) =>
-                                  updateStep(step.id, (entry) => ({ ...entry, title: e.target.value }))
-                                }
-                                className="w-full rounded-lg border border-black/12 bg-white px-2.5 py-2 text-sm outline-none focus:ring-1 focus:ring-accent/30 focus:border-accent/40"
-                              />
-                            </label>
-                          </div>
-
-                          <label className="space-y-1 block">
-                            <span className="text-[11px] font-semibold text-muted">Message (optional)</span>
-                            <textarea
-                              rows={2}
-                              value={step.message}
-                              onChange={(e) =>
-                                updateStep(step.id, (entry) => ({ ...entry, message: e.target.value }))
-                              }
-                              className="w-full rounded-lg border border-black/12 bg-white px-2.5 py-2 text-sm outline-none focus:ring-1 focus:ring-accent/30 focus:border-accent/40 resize-none"
-                            />
-                          </label>
-
-                          <div className="space-y-2">
-                            <p className="text-[11px] font-semibold text-muted">Assignments</p>
-                            <div className="flex flex-wrap gap-1.5">
-                              {step.assignments.map((assignment) => {
-                                const source =
-                                  assignment.assignmentType === "course"
-                                    ? courseFolders
-                                    : resourceFolders;
-                                const folderName =
-                                  source.find((folder) => folder.id === assignment.folderId)?.name ??
-                                  `#${assignment.folderId}`;
-                                return (
-                                  <button
-                                    key={`${assignment.assignmentType}-${assignment.folderId}`}
-                                    type="button"
-                                    onClick={() =>
-                                      removeAssignmentFromStep(
-                                        step.id,
-                                        assignment.assignmentType,
-                                        assignment.folderId,
-                                      )
-                                    }
-                                    className="inline-flex items-center gap-1 rounded-full bg-accent/10 text-accent px-2 py-1 text-[10px] hover:bg-accent/20"
-                                    title="Remove assignment"
-                                  >
-                                    {assignment.assignmentType === "course" ? "Course" : "Resource"}: {folderName}
-                                    <X size={11} />
-                                  </button>
-                                );
-                              })}
-                              {step.assignments.length === 0 && (
-                                <span className="text-xs text-muted">No assignments attached.</span>
-                              )}
-                            </div>
-
-                            <div className="grid sm:grid-cols-[130px_1fr_auto] gap-2">
-                              <select
-                                value={step.draftType}
-                                onChange={(e) =>
-                                  updateStep(step.id, (entry) => ({
-                                    ...entry,
-                                    draftType: e.target.value === "resource" ? "resource" : "course",
-                                    draftFolderId: "",
-                                  }))
-                                }
-                                className="rounded-lg border border-black/12 bg-white px-2.5 py-2 text-sm outline-none focus:ring-1 focus:ring-accent/30 focus:border-accent/40"
-                              >
-                                <option value="course">Course</option>
-                                <option value="resource">Resource</option>
-                              </select>
-
-                              <select
-                                value={step.draftFolderId}
-                                onChange={(e) =>
-                                  updateStep(step.id, (entry) => ({
-                                    ...entry,
-                                    draftFolderId: e.target.value ? Number(e.target.value) : "",
-                                  }))
-                                }
-                                className="rounded-lg border border-black/12 bg-white px-2.5 py-2 text-sm outline-none focus:ring-1 focus:ring-accent/30 focus:border-accent/40"
-                              >
-                                <option value="">Select {step.draftType}...</option>
-                                {stepFolders.map((folder) => (
-                                  <option key={`${step.draftType}-${folder.id}`} value={folder.id}>
-                                    {folder.name}
-                                  </option>
-                                ))}
-                              </select>
-
-                              <button
-                                type="button"
-                                onClick={() => addAssignmentToStep(step.id)}
-                                disabled={step.draftFolderId === ""}
-                                className="rounded-lg border border-black/12 px-3 py-2 text-sm font-medium text-foreground hover:bg-black/[0.04] disabled:opacity-50"
-                              >
-                                Attach
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setSteps((prev) => [...prev, createStepDraft(prev.length + 1)])}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-black/12 text-sm text-foreground hover:bg-black/[0.04]"
-                  >
-                    <Plus size={14} />
-                    Add step
-                  </button>
+                  <AutomationTemplateStepEditor
+                    steps={steps}
+                    onChange={setSteps}
+                    courseFolders={courseFolders}
+                    resourceFolders={resourceFolders}
+                  />
                 </>
               )}
 
               {totalAssignableCount === 0 && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                  Add top-level course/resource folders in Vault before creating automation steps.
+                  No assignable course or resource folders are available right now. If you added
+                  content in Vault recently, use “Refresh content” to pull the latest folders and
+                  nested items.
+                </div>
+              )}
+
+              {(courseFolders.length > 0 || resourceFolders.length > 0) && mode === "create" && (
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {[...courseFolders, ...resourceFolders].slice(0, 4).map((folder) => (
+                    <div
+                      key={`${folder.section}-${folder.id}`}
+                      className="rounded-2xl border border-black/10 bg-white p-4 space-y-2"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-foreground truncate">
+                            {folder.pathLabel}
+                          </p>
+                          {folder.description && (
+                            <p className="text-xs text-muted mt-1 line-clamp-2">
+                              {folder.description}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-[10px] px-2 py-1 rounded-full bg-black/[0.04] text-muted whitespace-nowrap">
+                          {folder.section === "courses" ? "Course" : "Resource"}
+                        </span>
+                      </div>
+
+                      <p className="text-[11px] text-muted">{describeFolder(folder)}</p>
+
+                      {folder.previewItems.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {folder.previewItems.map((item) => (
+                            <span
+                              key={item.id}
+                              className="inline-flex items-center gap-1 rounded-full bg-black/[0.04] px-2 py-1 text-[10px] text-foreground"
+                              title={item.folderName}
+                            >
+                              {item.title}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -653,7 +628,11 @@ export function AutomationsTab({ clientId }: { clientId: string }) {
                 disabled={submitting || totalAssignableCount === 0}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-br from-accent to-accent-light text-white text-sm font-semibold disabled:opacity-50"
               >
-                {submitting ? <Clock3 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                {submitting ? (
+                  <Clock3 size={14} className="animate-spin" />
+                ) : (
+                  <CheckCircle2 size={14} />
+                )}
                 {submitting ? "Saving..." : "Assign automation"}
               </button>
             </div>
