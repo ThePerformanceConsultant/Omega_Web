@@ -148,6 +148,11 @@ function ClientsPageInner() {
     return (
       <ClientProfile
         client={selectedClient}
+        onClientDeleted={(deletedClientId) => {
+          clientViewStore.setClients(clients.filter((c) => c.id !== deletedClientId));
+          clientViewStore.clearSelectedClient();
+          setInitialTab(undefined);
+        }}
         initialTab={initialTab}
       />
     );

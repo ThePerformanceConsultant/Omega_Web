@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { Trash2 } from "lucide-react";
 import { Client, ClientSubTab } from "@/lib/types";
 import { clientStore } from "@/lib/client-store";
 import { clientViewStore, useClientViewState } from "@/lib/client-view-store";
@@ -28,12 +29,15 @@ const PANEL_TITLES: Record<string, string> = {
 
 export function ClientProfile({
   client,
+  onClientDeleted,
   initialTab,
 }: {
   client: Client;
+  onClientDeleted?: (clientId: string) => void;
   initialTab?: ClientSubTab;
 }) {
   const { activePanel, activeSubTab } = useClientViewState();
+  const [deletePending, setDeletePending] = useState(false);
 
   // Hydrate tasks & notes for this client
   useEffect(() => {
@@ -50,8 +54,59 @@ export function ClientProfile({
     }
   }, [initialTab]);
 
+  async function handleDeleteClient() {
+    if (deletePending) return;
+
+    const firstConfirm = window.confirm(
+      `Delete ${client.full_name}'s account? This permanently removes their login and cannot be undone.`
+    );
+    if (!firstConfirm) return;
+
+    const confirmationText = window.prompt("Type DELETE to confirm account deletion.");
+    if (confirmationText !== "DELETE") return;
+
+    setDeletePending(true);
+    try {
+      const response = await fetch("/api/admin/delete-client", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: client.id }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to delete client account");
+      }
+
+      if (onClientDeleted) {
+        onClientDeleted(client.id);
+      } else {
+        const remainingClients = clientViewStore
+          .getState()
+          .clients
+          .filter((existingClient) => existingClient.id !== client.id);
+        clientViewStore.setClients(remainingClients);
+        clientViewStore.clearSelectedClient();
+      }
+    } catch (error: any) {
+      window.alert(error?.message || "Failed to delete client account.");
+    } finally {
+      setDeletePending(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <button
+          onClick={handleDeleteClient}
+          disabled={deletePending}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm font-medium hover:bg-red-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          <Trash2 size={14} />
+          {deletePending ? "Deleting..." : "Delete Client Account"}
+        </button>
+      </div>
+
       <div className="relative min-h-[calc(100vh-200px)]">
         <div
           className={`transition-all duration-500 ease-out min-w-0 ${

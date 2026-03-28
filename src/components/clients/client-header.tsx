@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, MessageCircle, CheckSquare, StickyNote, Info, ClipboardList } from "lucide-react";
+import { ArrowLeft, MessageCircle, CheckSquare, StickyNote, Info, ClipboardList, Trash2 } from "lucide-react";
 import { Client, ClientPanelType } from "@/lib/types";
 import { Avatar } from "@/components/ui/avatar";
 
@@ -17,11 +17,15 @@ export function ClientHeader({
   activePanel,
   onPanelToggle,
   onBack,
+  onDeleteClient,
+  deletePending = false,
 }: {
   client: Client;
   activePanel: ClientPanelType;
   onPanelToggle: (panel: ClientPanelType) => void;
   onBack: () => void;
+  onDeleteClient?: () => void;
+  deletePending?: boolean;
 }) {
   return (
     <div className="flex items-center gap-3 flex-wrap">
@@ -49,6 +53,17 @@ export function ClientHeader({
 
       {/* Pill Buttons */}
       <div className="flex items-center gap-2">
+        {onDeleteClient && (
+          <button
+            onClick={onDeleteClient}
+            disabled={deletePending}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-60 disabled:cursor-not-allowed"
+            title="Delete client account"
+          >
+            <Trash2 size={14} />
+            <span className="hidden sm:inline">{deletePending ? "Deleting..." : "Delete Account"}</span>
+          </button>
+        )}
         {PANELS.map((p) => {
           const active = activePanel === p.key;
           return (
