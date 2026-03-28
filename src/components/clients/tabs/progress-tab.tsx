@@ -51,6 +51,32 @@ function LineChart({
   const [chartWidth, setChartWidth] = useState(500);
   const gradientId = useId().replace(/:/g, "");
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+
+    const updateWidth = () => {
+      const measured = Math.floor(node.clientWidth);
+      setChartWidth(Math.max(420, measured));
+    };
+
+    updateWidth();
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const measured = Math.floor(entry.contentRect.width);
+          setChartWidth(Math.max(420, measured));
+        }
+      });
+      observer.observe(node);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener("resize", updateWidth);
+    return () => window.removeEventListener("resize", updateWidth);
+  }, []);
+
   const formatTooltipDate = useCallback((rawValue: string) => {
     const date = new Date(rawValue);
     if (Number.isNaN(date.getTime())) {
@@ -167,32 +193,6 @@ function LineChart({
   const tooltipHeight = 36 + extraRows.length * 14;
   const tooltipWidth = 210;
   const formattedHoveredDate = hoveredPoint ? formatTooltipDate(hoveredPoint.date) : "";
-
-  useEffect(() => {
-    const node = containerRef.current;
-    if (!node) return;
-
-    const updateWidth = () => {
-      const measured = Math.floor(node.clientWidth);
-      setChartWidth(Math.max(420, measured));
-    };
-
-    updateWidth();
-
-    if (typeof ResizeObserver !== "undefined") {
-      const observer = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-          const measured = Math.floor(entry.contentRect.width);
-          setChartWidth(Math.max(420, measured));
-        }
-      });
-      observer.observe(node);
-      return () => observer.disconnect();
-    }
-
-    window.addEventListener("resize", updateWidth);
-    return () => window.removeEventListener("resize", updateWidth);
-  }, []);
 
   return (
     <div ref={containerRef} className={fullBleed ? "-mx-2 sm:-mx-3" : ""}>

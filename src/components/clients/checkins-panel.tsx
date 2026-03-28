@@ -67,9 +67,90 @@ function isLegacySectionHeaderQuestion(question: FormQuestion): boolean {
   return body.length >= 60;
 }
 
-function renderAnswer(answer: FormAnswer | undefined, question: FormQuestion) {
-  const signatureStyle = { filter: "invert(1)" };
+function SignaturePreview({ dataUrl }: { dataUrl: string }) {
+  const [processedSrc, setProcessedSrc] = useState<string | null>(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    const image = new Image();
+
+    image.onload = () => {
+      try {
+        const width = image.naturalWidth || image.width;
+        const height = image.naturalHeight || image.height;
+        if (!width || !height) {
+          if (!cancelled) setProcessedSrc(dataUrl);
+          return;
+        }
+
+        const sourceCanvas = document.createElement("canvas");
+        sourceCanvas.width = width;
+        sourceCanvas.height = height;
+        const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+        if (!sourceCtx) {
+          if (!cancelled) setProcessedSrc(dataUrl);
+          return;
+        }
+
+        sourceCtx.drawImage(image, 0, 0);
+        const imageData = sourceCtx.getImageData(0, 0, width, height);
+        const pixels = imageData.data;
+
+        for (let i = 0; i < pixels.length; i += 4) {
+          const alpha = pixels[i + 3];
+          if (alpha === 0) continue;
+
+          const luminance = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+          const mappedAlpha = Math.round((luminance / 255) * alpha);
+          pixels[i] = 0;
+          pixels[i + 1] = 0;
+          pixels[i + 2] = 0;
+          pixels[i + 3] = mappedAlpha;
+        }
+
+        sourceCtx.putImageData(imageData, 0, 0);
+
+        const outputCanvas = document.createElement("canvas");
+        outputCanvas.width = width;
+        outputCanvas.height = height;
+        const outputCtx = outputCanvas.getContext("2d");
+        if (!outputCtx) {
+          if (!cancelled) setProcessedSrc(dataUrl);
+          return;
+        }
+
+        outputCtx.fillStyle = "#ffffff";
+        outputCtx.fillRect(0, 0, width, height);
+        outputCtx.drawImage(sourceCanvas, 0, 0);
+
+        if (!cancelled) {
+          setProcessedSrc(outputCanvas.toDataURL("image/png"));
+        }
+      } catch {
+        if (!cancelled) setProcessedSrc(dataUrl);
+      }
+    };
+
+    image.onerror = () => {
+      if (!cancelled) setProcessedSrc(dataUrl);
+    };
+
+    image.src = dataUrl;
+    return () => {
+      cancelled = true;
+    };
+  }, [dataUrl]);
+
+  return (
+    <img
+      src={processedSrc ?? dataUrl}
+      alt="Client signature"
+      className="max-h-40 rounded-lg border border-black/10 bg-white p-2"
+    />
+  );
+}
+
+function renderAnswer(answer: FormAnswer | undefined, question: FormQuestion) {
   if (question.questionType === "section_header" || isLegacySectionHeaderQuestion(question)) {
     return (
       <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2">
@@ -89,14 +170,7 @@ function renderAnswer(answer: FormAnswer | undefined, question: FormQuestion) {
   if (!answer) return <span className="text-muted text-sm italic">No answer</span>;
 
   if (answer.answerText?.startsWith("data:image/")) {
-    return (
-      <img
-        src={answer.answerText}
-        alt="Client signature"
-        className="max-h-40 rounded-lg border border-black/10 bg-white p-2"
-        style={signatureStyle}
-      />
-    );
+    return <SignaturePreview dataUrl={answer.answerText} />;
   }
 
   switch (question.questionType) {
@@ -178,14 +252,7 @@ function renderAnswer(answer: FormAnswer | undefined, question: FormQuestion) {
       );
     case "signature_draw":
       if (answer.answerText?.startsWith("data:image/")) {
-        return (
-          <img
-            src={answer.answerText}
-            alt="Client signature"
-            className="max-h-40 rounded-lg border border-black/10 bg-white p-2"
-            style={signatureStyle}
-          />
-        );
+        return <SignaturePreview dataUrl={answer.answerText} />;
       }
       return <span className="text-muted text-sm italic">Signature image unavailable</span>;
     default:
