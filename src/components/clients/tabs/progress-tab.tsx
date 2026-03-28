@@ -119,16 +119,17 @@ function LineChart({
     hoveredIndex !== null && points[hoveredIndex] ? points[hoveredIndex] : null;
   const targetY =
     targetValue !== null && Number.isFinite(targetValue) ? toY(targetValue) : null;
-  const movingAveragePoints = useMemo(() => {
-    if (!movingAverage?.enabled) return [];
-    const windowSize = Math.max(2, movingAverage.window ?? 7);
-    return points.map((point, index) => {
-      const start = Math.max(0, index - windowSize + 1);
-      const sample = points.slice(start, index + 1);
-      const avg = sample.reduce((sum, entry) => sum + entry.value, 0) / sample.length;
-      return { x: point.x, y: toY(avg), value: avg, date: point.date };
-    });
-  }, [movingAverage?.enabled, movingAverage?.window, points]);
+  const movingAveragePoints = !movingAverage?.enabled
+    ? []
+    : (() => {
+        const windowSize = Math.max(2, movingAverage.window ?? 7);
+        return points.map((point, index) => {
+          const start = Math.max(0, index - windowSize + 1);
+          const sample = points.slice(start, index + 1);
+          const avg = sample.reduce((sum, entry) => sum + entry.value, 0) / sample.length;
+          return { x: point.x, y: toY(avg), value: avg, date: point.date };
+        });
+      })();
   const movingAveragePath = movingAveragePoints.length > 1
     ? movingAveragePoints.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ")
     : "";
