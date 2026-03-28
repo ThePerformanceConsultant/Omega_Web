@@ -251,12 +251,12 @@ export function WorkoutLogDetail({ entry, allLogs, onBack }: { entry: WorkoutLog
             <div className="text-sm whitespace-pre-wrap bg-black/[0.02] rounded-lg px-3 py-2 space-y-1.5">
               {ex.summary && (
                 <p>
-                  <span className="font-semibold">Client note:</span> {ex.summary}
+                  <span className="font-semibold">Coach note:</span> {ex.summary}
                 </p>
               )}
               {ex.notes && (
                 <p>
-                  <span className="font-semibold">Coach note:</span> {ex.notes}
+                  <span className="font-semibold">Client note:</span> {ex.notes}
                 </p>
               )}
             </div>
@@ -298,12 +298,12 @@ export function WorkoutLogDetail({ entry, allLogs, onBack }: { entry: WorkoutLog
                 <div className="text-xs text-muted border-t border-black/5 pt-2 space-y-1">
                   {ex.summary && (
                     <p>
-                      <span className="font-semibold">Client note:</span> {ex.summary}
+                      <span className="font-semibold">Coach note:</span> {ex.summary}
                     </p>
                   )}
                   {ex.notes && (
-                    <p>
-                      <span className="font-semibold">Coach note:</span> {ex.notes}
+                    <p className="italic">
+                      <span className="font-semibold not-italic">Client note:</span> {ex.notes}
                     </p>
                   )}
                 </div>

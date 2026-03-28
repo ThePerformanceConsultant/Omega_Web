@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useId } from "react";
 import {
   Star,
   BarChart3,
+  Dumbbell,
   Target,
   CheckCircle2,
   XCircle,
@@ -20,7 +21,6 @@ import {
   Flame,
   Zap,
   Search,
-  Trophy,
 } from "lucide-react";
 import { fetchWorkoutLogs, fetchClientTasks, fetchMetricConfigs, fetchMetricEntries, createMetricConfig, updateMetricConfig, deleteMetricConfig, fetchActivitySessions, deleteActivitySession } from "@/lib/supabase/db";
 import type { WorkoutLogEntry, Task, MetricConfig, MetricEntry, ActivitySession, SetLogEntry } from "@/lib/types";
@@ -47,6 +47,29 @@ function LineChart({
 }) {
   const gradientId = useId().replace(/:/g, "");
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const formatTooltipDate = useCallback((rawValue: string) => {
+    const date = new Date(rawValue);
+    if (Number.isNaN(date.getTime())) {
+      return rawValue.replace("T", " ").replace("+00:00", " UTC");
+    }
+
+    const hasTime = /T\d{2}:\d{2}/.test(rawValue) || /\d{2}:\d{2}/.test(rawValue);
+    if (hasTime) {
+      return date.toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    }
+
+    return date.toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  }, []);
   const safeData = useMemo(
     () =>
       data.map((point) => ({
@@ -137,6 +160,7 @@ function LineChart({
     hoveredIndex !== null && tooltipRows ? tooltipRows(hoveredIndex) : [];
   const tooltipHeight = 36 + extraRows.length * 14;
   const tooltipWidth = 210;
+  const formattedHoveredDate = hoveredPoint ? formatTooltipDate(hoveredPoint.date) : "";
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ maxHeight: height }}>
@@ -250,9 +274,7 @@ function LineChart({
             strokeWidth={2}
             onMouseEnter={() => setHoveredIndex(i)}
             onMouseLeave={() => setHoveredIndex(null)}
-          >
-            <title>{`${p.date}: ${valueFormatter ? valueFormatter(p.value) : formatTick(p.value)}`}</title>
-          </circle>
+          />
         </g>
       ))}
 
@@ -282,7 +304,7 @@ function LineChart({
             fontSize={10}
             className="fill-white"
           >
-            {hoveredPoint.date}
+            {formattedHoveredDate}
           </text>
           <text
             x={Math.min(width - tooltipWidth, hoveredPoint.x + 18)}
@@ -1890,10 +1912,20 @@ export function ProgressTab({ clientId }: { clientId: string }) {
                                 <span className="text-muted">Vol: {formatVolume(session)}</span>
                                 <span className="text-muted">e1RM: {session.estimatedOneRM ? `${session.estimatedOneRM.toFixed(1)} kg` : "n/a"}</span>
                                 {(session.isWeightPb || session.isVolumePb) && (
-                                  <span className="inline-flex items-center gap-1 text-warning font-semibold">
-                                    <Trophy size={12} />
-                                    PB
-                                  </span>
+                                  <div className="inline-flex items-center gap-1.5">
+                                    {session.isWeightPb && (
+                                      <span className="inline-flex items-center gap-1 text-success font-semibold">
+                                        <Dumbbell size={12} />
+                                        Weight PB
+                                      </span>
+                                    )}
+                                    {session.isVolumePb && (
+                                      <span className="inline-flex items-center gap-1 text-accent font-semibold">
+                                        <BarChart3 size={12} />
+                                        Volume PB
+                                      </span>
+                                    )}
+                                  </div>
                                 )}
                                 {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                               </div>
@@ -1901,6 +1933,23 @@ export function ProgressTab({ clientId }: { clientId: string }) {
 
                             {isOpen && (
                               <div className="border-t border-black/10 px-3 py-2.5">
+                                <div className="flex items-center justify-between gap-2 mb-2">
+                                  <p className="text-xs text-muted">{effectiveExercise}</p>
+                                  <div className="flex items-center gap-2">
+                                    {session.isWeightPb && (
+                                      <span className="inline-flex items-center gap-1 text-[11px] text-success font-semibold">
+                                        <Dumbbell size={12} />
+                                        Weight PB
+                                      </span>
+                                    )}
+                                    {session.isVolumePb && (
+                                      <span className="inline-flex items-center gap-1 text-[11px] text-accent font-semibold">
+                                        <BarChart3 size={12} />
+                                        Volume PB
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
                                 <table className="w-full text-xs">
                                   <thead>
                                     <tr className="text-left text-muted">

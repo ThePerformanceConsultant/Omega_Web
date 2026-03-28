@@ -54,7 +54,7 @@ export function ClientProfile({
       <div className="relative min-h-[calc(100vh-200px)]">
         <div
           className={`transition-all duration-500 ease-out min-w-0 ${
-            activePanel ? "pr-[min(38vw,560px)]" : "w-full"
+            activePanel ? "pr-[calc(min(38vw,560px)+12px)]" : "w-full"
           }`}
         >
           {activeSubTab === "overview" && (
